@@ -1,0 +1,7 @@
+default CN.ipv4.pref=-1 CN.ipv6.pref=-1 cn.ipv6.pref=-1 cn.ipv4.prf=-1
+verifer 192.168.1.1 name=@verifer1 timeout=100 type=anticheck
+verifer 192.168.1.1 name=@verifer1 timeout=100 type=zonecheck table=CN
+nameserver 10.10.10.10 CN.ipv4.pref=100 validate=@verifer1
+nameserver 101.101.101.101 cn.ipv4.pref=200
+nameserver 101.101.101.101 cn.ipv6.pref=300
+nameserver ::ffff:10.10.10.10 CN.ipv6.pref=100
