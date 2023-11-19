@@ -1,6 +1,7 @@
 const tls = require('tls');
 const fs = require('fs');
 const net = require('net');
+const http = require('http');
 const dgram = require('dgram');
 const table = require('./apnic-table-6');
 const dnsp = require('dns-packet');
@@ -49,9 +50,9 @@ function dnsSetClientSubnet(msg, clientip) {
       if (!item.options) return item;
 
       if (item.name == '.' && item.type == "OPT") {
-	item.options = item.options.filter(item => !item.type || item.type != "CLIENT_SUBNET");
-	item.options.push(additionals0.options[0]);
-	injected = true;
+        item.options = item.options.filter(item => !item.type || item.type != "CLIENT_SUBNET");
+        item.options.push(additionals0.options[0]);
+        injected = true;
       }
 
       return item;
@@ -81,189 +82,127 @@ function dnsNomalize(data) {
   return data;
 }
 
-const SLOW_PORT = 53;
-const SLOW_SERVER = "::ffff:1.0.0.1";
+const FAR_PORT = 53;
+const FAR_SERVER = "::ffff:8.8.8.8";
 
-const FAST_PORT = 53;
-const FAST_SERVER = "::ffff:223.5.5.5";
+const NEAR_PORT = 53;
+const NEAR_SERVER = "::ffff:223.5.5.5";
+// const NEAR_SERVER = "::ffff:119.29.29.29";
 
-const IPV4_FAST_PREFERENE = 1;
-const IPV4_SLOW_PREFERENE = 4;
+const IPV4_NEAR_PREFERENE = 1;
+const IPV4_FAR_PREFERENE  = 3;
 
-const IPV6_FAST_PREFERENE = 5;
-const IPV6_SLOW_PREFERENE = 3;
+const IPV6_NEAR_PREFERENE = 1;
+const IPV6_FAR_PREFERENE  = 3;
 
-const NAT64_FAST_PREFERENE = 8;
-const NAT64_SLOW_PREFERENE = 3;
+const NAT64_NEAR_PREFERENE = 8;
+const NAT64_FAR_PREFERENE  = 7;
 
-function preference(json, prefMaps) {
-  let pref = 100, best = 100;
+const INVALIDE_PREFERENE   = 100;
+const DETECT_DOMAIN_SUFFIEX = ".oil.cootail.com";
 
-  for (item of json.answers) {
-    if (item.type == 'AAAA') {
-      // console.log("item6.name " + item.name + " table=" + table.lookup6(item.data) + " data=" + item.data);
-      pref = prefMaps[table.lookup6(item.data)];
-      if (pref < best) best = pref;
-    } else if (item.type == 'A') {
-      // console.log("item4.name " + item.name + " table=" + table.lookup4(item.data) + " data=" + item.data);
-      pref = prefMaps[table.lookup4(item.data)];
-      if (pref < best) best = pref;
-    }
+const DETECT_DOMAIN_JSON = {
+  type: 'query',
+  id: 26858,
+  flags: dnsp.RECURSION_DESIRED,
+  questions: [{
+    type: 'A',
+    name: 'google.com'
+  }]
+};
+
+let DETECHCACHE = {};
+
+function getDetectStatus(message) {
+  const qname = message.questions[0].name;
+  const key = qname.toLowerCase();
+
+  if (qname.endsWith(DETECT_DOMAIN_SUFFIEX)) {
+    return "Ok";
   }
 
-  return best;
-}
-
-function cacheFilter(session) {
-  let ipv4Slow = session.slowCaches["A"];
-  let ipv6Slow = session.slowCaches["AAAA"];
-
-  let ipv4Fast = session.fastCaches["A"];
-  let ipv6Fast = session.fastCaches["AAAA"];
-
-  if (ipv6Slow && ipv4Slow && ipv4Fast && ipv6Fast) {
-    // console.log("ipv6Slow: " + ipv6Slow.questions[0].name);
-    // console.log("ipv6Fast: " + ipv6Fast.questions[0].name);
-
-    // console.log("ipv4Slow: " + ipv4Slow.questions[0].name);
-    // console.log("ipv4Fast: " + ipv4Fast.questions[0].name);
-
-    if ((ipv4Fast.questions[0].name == ipv6Slow.questions[0].name)
-      && (ipv4Fast.questions[0].name == ipv4Slow.questions[0].name)
-      && (ipv4Slow.questions[0].name == ipv6Fast.questions[0].name)) {
-
-      let ipv4Record = null, ipv6Record = null;
-      let ipv4Pref = 100, ipv6Pref = 100, mainPref = 100;
-
-      let pref = preference(ipv6Fast, [IPV6_FAST_PREFERENE, 100]);
-      if (pref <= mainPref) {
-	mainPref = pref;
-        ipv6Pref = pref;
-        ipv6Record = ipv6Fast;
-      }
-
-      pref = preference(ipv6Slow, [100, IPV6_SLOW_PREFERENE]);
-      if (pref <= mainPref) {
-	mainPref = pref;
-        ipv6Pref = pref;
-        ipv6Record = ipv6Slow;
-      }
-
-      pref = preference(ipv4Fast, [IPV4_FAST_PREFERENE, 100]);
-      if (pref <= mainPref) {
-	mainPref = pref;
-        ipv4Pref = pref;
-        ipv4Record = ipv4Fast;
-      }
-
-      pref = preference(ipv4Slow, [100, IPV4_SLOW_PREFERENE]);
-      if (pref <= mainPref) {
-	mainPref = pref;
-        ipv4Pref = pref;
-        ipv4Record = ipv4Slow;
-      }
-
-      pref = preference(ipv4Slow, [100, NAT64_SLOW_PREFERENE]);
-      if (pref <= mainPref) {
-	mainPref = pref;
-        ipv6Pref = pref;
-        ipv6Record = ipv4Slow;
-      }
-
-      pref = preference(ipv4Fast, [NAT64_FAST_PREFERENE, 100]);
-      if (pref <= mainPref) {
-	mainPref = pref;
-        ipv6Pref = pref;
-        ipv6Record = ipv4Fast;
-      }
-
-      console.log("domain=" + ipv4Slow.questions[0].name  + " mainPref=" + mainPref + " ipv6Pref=" + ipv6Pref + " ipv4Pref=" + ipv4Pref);
-      session.ipv4 = [];
-      if (ipv4Pref <= mainPref) {
-	console.log("ipv4=" + JSON.stringify(ipv4Record.answers));
-	for (let item of ipv4Record.answers) {
-	  let newitem = Object.assign({}, item);
-	  session.ipv4.push(newitem);
-	}
-      }
-
-      session.ipv6 = [];
-      if (ipv6Pref <= mainPref) {
-	console.log("ipv6=" + JSON.stringify(ipv6Record.answers));
-	for (let item of ipv6Record.answers) {
-	  let newitem = Object.assign({}, item);
-	  if (newitem.type == 'A') {
-	    newitem.type = 'AAAA';
-	    newitem.data = "64:ff9b::" + item.data;
-	  }
-	  session.ipv6.push(newitem);
-	}
-      }
-
-      return true;
-    }
+  if (message.answers.length != 1) {
+    return "Ok";
   }
 
-   return false;
+  if (DETECHCACHE[key]) {
+    return DETECHCACHE[key];
+  }
+
+  return "Chaos";
 }
 
 function dnsSendQuery(session, client, message) {
-  let slow_answered = false;
-  let fast_answered = false;
-  let slow_answers, fast_answers;
+  let near_answered = false;
+  let far_answered = false;
+  let fake_answered = false, fake_request = false;
 
   const onMessage = function(resolv) {
     return (segment, rinfo) => {
       let msg = dnsp.decode(segment);
       // console.log("response " + JSON.stringify(msg));
-      console.log("rinfo " + rinfo.address + " fast " + FAST_SERVER + " slow " + SLOW_SERVER);
+      // console.log("rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
 
-      if (rinfo.address == SLOW_SERVER) {
-	session.slowCaches[msg.questions[0].type] = msg;
-	slow_answered = true;
-	slow_answers = msg;
+      const qname = msg.questions[0].name;
+      if (fake_request && qname.endsWith(DETECT_DOMAIN_SUFFIEX)) {
+
+        const originName = qname.replace(DETECT_DOMAIN_SUFFIEX, "").toLowerCase();
+
+        if (msg.answers.find(item => item.type == 'A' && item.data == "127.127.127.127")) {
+          console.log("cachedOK " + originName);
+          DETECHCACHE[originName] = "cachedOK";
+        } else if (msg.answers.find(item => item.type == 'A' && item.data != "127.127.127.127")) {
+          console.log("cachedBad " + originName);
+          DETECHCACHE[originName] = "cachedBad";
+        }
+
+        fake_answered = true;
+      } else if (rinfo.address == NEAR_SERVER && !near_answered) {
+        near_answered = true;
+        session.nearCaches[msg.questions[0].type] = msg;
+        /*"Ok":"cachedOK":"cachedBad": */
+        if (getDetectStatus(msg) == "Chaos") {
+          console.log("detect start " + qname);
+          const detectMessage = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+          detectMessage.questions[0].name = qname + DETECT_DOMAIN_SUFFIEX;
+          client.send(dnsp.encode(detectMessage), FAR_PORT, FAR_SERVER, (err) => {  });
+          fake_request = true;
+        }
+      } else if (rinfo.address == FAR_SERVER) {
+        session.farCaches[msg.questions[0].type] = msg;
+        far_answered = true;
       }
 
-      if (rinfo.address == FAST_SERVER) {
-	session.fastCaches[msg.questions[0].type] = msg;
-	fast_answered = true;
-	fast_answers = msg;
-      }
-
-      console.log("slow_answer " + slow_answered + " fast_answer " + fast_answered);
-      if (slow_answered && fast_answered) {
-	if (msg.questions[0].type == 'AAAA' && cacheFilter(session)) {
-	  resolv(segment);
-	} else if (msg.questions[0].type == 'A' && cacheFilter(session)) {
-	  resolv(segment);
-	} else {
-	  resolv(segment);
-	}
+      // console.log("slow_answer " + far_answered + " fast_answer " + near_answered);
+      if (far_answered && near_answered && fake_request == fake_answered) {
+        resolv(session);
       }
     }
   };
 
+  let msg = dnsNomalize(message);
+  const type = msg.questions[0].type;
+  const qname = msg.questions[0].name;
+
+  // dnsSetClientSubnet(msg, "103.70.115.29");
+  const far_msg = dnsp.encode(msg);
+  let far_out = v => far_answered || client.send(far_msg, FAR_PORT, FAR_SERVER, (err) => { console.log(` far send: ${qname} ${type} ${err}`); });
+
+  dnsSetClientSubnet(msg, "117.144.103.197");
+  const near_msg = dnsp.encode(msg);
+  let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { console.log(`near send: ${qname} ${type} ${err}`); });
+
+  near_out();
+  const near_timeout = setTimeout(near_out, 300);
+
+  far_out();
+  const far_timeout = setTimeout(far_out, 300);
+
   const cb = (resolv, reject) => {
     client.on('error', reject);
     client.on('message', onMessage(resolv));
-    client.timer = setTimeout(reject, 3300);
+    const timer = setTimeout(reject, 3300);
   };
-
-  let msg = dnsNomalize(dnsp.decode(message));
-  // dnsSetClientSubnet(msg, "103.70.115.29");
-  let slow_msg = dnsp.encode(msg);
-  let slow_out = v => slow_answered || client.send(slow_msg, SLOW_PORT, SLOW_SERVER, (err) => { console.log(`slow resend: ${err}`); });
-
-  // let msg = dnsp.decode(message);
-  dnsSetClientSubnet(msg, "117.144.103.197");
-  let fast_msg = dnsp.encode(msg);
-  let fast_out = v => fast_answered || client.send(fast_msg, FAST_PORT, FAST_SERVER, (err) => { console.log(`fast resend: ${err}`); });
-
-  fast_out();
-  setTimeout(slow_out, 300);
-
-  slow_out();
-  setTimeout(fast_out, 300);
 
   return new Promise(cb);
 }
@@ -271,10 +210,177 @@ function dnsSendQuery(session, client, message) {
 function dnsDispatchQuery(session, message) {
   const client = dgram.createSocket('udp6');
 
-  const data = dnsp.decode(message);
-  console.log("QUERY " + JSON.stringify(dnsp.decode(message).questions[0]));
-
+  console.log("QUERY " + JSON.stringify(message.questions[0]));
   return dnsSendQuery(session, client, message).finally(v => client.close());
+}
+
+let OLD_SESSION = {};
+let NEW_SESSION = {};
+
+let SESSION = OLD_SESSION;
+let old_new_stamp = new Date().getTime();
+
+function sessionCallback(resolv, reject, query) {
+  let promises = [];
+  const key = query.questions[0].name.toLowerCase();
+  let session = {nearCaches: {}, farCaches: {}, key: key};
+
+  let newq = dnsp.decode(dnsp.encode(query));
+  let question0 = Object.assign({}, newq.questions[0]); 
+
+  if (query.questions[0].type == 'AAAA') {
+    question0.type = 'A';
+    newq.questions = [question0];
+
+    promises.push(dnsDispatchQuery(session, newq));
+    promises.push(dnsDispatchQuery(session, query));
+  } else if (query.questions[0].type == 'A') {
+    let question0 = Object.assign({}, newq.questions[0]); 
+    question0.type = 'AAAA';
+    newq.questions = [question0];
+
+    promises.push(dnsDispatchQuery(session, newq));
+    promises.push(dnsDispatchQuery(session, query));
+  }
+
+  Promise.all(promises).then(v => resolv(session), reject);
+};
+
+function isInjectHttps(domain)
+{
+   let lowerDomain = domain.toLowerCase();
+
+   const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.reddit.com", "app.cootail.com", "www.quora.com"];
+
+   return categories.includes(lowerDomain) || DETECHCACHE[lowerDomain] && DETECHCACHE[lowerDomain] == "cachedBad";
+}
+
+function dnsFetchQuery(fragment) {
+
+  const query = dnsp.decode(fragment);
+  const domain = query.questions[0].name;
+  const key = domain.toLowerCase();
+
+  if (OLD_SESSION[key])
+    return OLD_SESSION[key];
+
+  if (NEW_SESSION[key])
+    return NEW_SESSION[key];
+
+  const stamp = new Date().getTime();
+
+  if (old_new_stamp + 5000 < stamp) {
+    if (SESSION === OLD_SESSION) {
+      SESSION = NEW_SESSION = {};
+      old_new_stamp = stamp;
+    } else if (SESSION === NEW_SESSION) {
+      SESSION = OLD_SESSION = {};
+      old_new_stamp = stamp;
+    }
+    console.log("old session select " + (SESSION === OLD_SESSION));
+    console.log("new session select " + (SESSION === NEW_SESSION));
+  }
+
+  const cb = (resolv, reject) => sessionCallback(resolv, reject, query);
+  SESSION[key] = new Promise(cb);
+  return SESSION[key];
+}
+
+function preference(json, prefMaps) {
+  let pref = INVALIDE_PREFERENE, best = INVALIDE_PREFERENE;
+
+  if (json && json.answers) {
+    for (item of json.answers) {
+      if (item.type == 'AAAA') {
+        // console.log("item6.name " + item.name + " table=" + table.lookup6(item.data) + " data=" + item.data);
+        pref = prefMaps[table.lookup6(item.data)];
+        if (pref < best) best = pref;
+      } else if (item.type == 'A') {
+        // console.log("item4.name " + item.name + " table=" + table.lookup4(item.data) + " data=" + item.data);
+        pref = prefMaps[table.lookup4(item.data)];
+        if (pref < best) best = pref;
+      }
+    }
+  }
+
+  return best;
+}
+
+function cacheFilter(session) {
+  let ipv4Far = session.farCaches["A"];
+  let ipv6Far = session.farCaches["AAAA"];
+
+  let ipv4Near = session.nearCaches["A"];
+  let ipv6Near = session.nearCaches["AAAA"];
+
+  let ipv4Record = null, ipv6Record = null;
+  let ipv4Pref = INVALIDE_PREFERENE, ipv6Pref = INVALIDE_PREFERENE, mainPref = INVALIDE_PREFERENE;
+  const isNearGood = !DETECHCACHE[session.key] || DETECHCACHE[session.key] != "cachedBad";
+
+  let pref = preference(ipv6Near, [IPV6_NEAR_PREFERENE, INVALIDE_PREFERENE]);
+  if (pref <= ipv6Pref && isNearGood) {
+    ipv6Pref = pref;
+    ipv6Record = ipv6Near;
+  }
+  // ipv6Near.answers.map(i => console.log("near " + JSON.stringify(i)));
+
+  pref = preference(ipv6Far, [INVALIDE_PREFERENE, IPV6_FAR_PREFERENE]);
+  if (pref <= ipv6Pref) {
+    ipv6Pref = pref;
+    ipv6Record = ipv6Far;
+  }
+  // ipv6Far.answers.map(i => console.log("far_ " + JSON.stringify(i)));
+
+  pref = preference(ipv4Near, [IPV4_NEAR_PREFERENE, INVALIDE_PREFERENE]);
+  if (pref <= ipv4Pref && isNearGood) {
+    ipv4Pref = pref;
+    ipv4Record = ipv4Near;
+  }
+
+  pref = preference(ipv4Far, [INVALIDE_PREFERENE, IPV4_FAR_PREFERENE]);
+  if (pref <= ipv4Pref) {
+    ipv4Pref = pref;
+    ipv4Record = ipv4Far;
+  }
+
+  pref = preference(ipv4Far, [INVALIDE_PREFERENE, NAT64_FAR_PREFERENE]);
+  if (pref <= ipv6Pref) {
+    ipv6Pref = pref;
+    ipv6Record = ipv4Far;
+  }
+
+  pref = preference(ipv4Near, [NAT64_NEAR_PREFERENE, INVALIDE_PREFERENE]);
+  if (pref <= ipv6Pref && isNearGood) {
+    ipv6Pref = pref;
+    ipv6Record = ipv4Near;
+  }
+
+  let results = {ipv4: [], ipv6: []};
+  mainPref = ipv4Pref > ipv6Pref? ipv6Pref: ipv4Pref;
+
+  console.log("ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
+  if (ipv4Pref <= mainPref) {
+    ipv4Record.answers.map(item => console.log("ipv4=" + JSON.stringify(item)));
+    for (let item of ipv4Record.answers) {
+      let newitem = Object.assign({}, item);
+      results.ipv4.push(newitem);
+    }
+  }
+
+  results.ipv6 = [];
+  if (ipv6Pref <= mainPref || ipv6Record && ipv6Record.questions[0].name.toLowerCase().includes("gstatic.com")) {
+    ipv6Record.answers.map(item => console.log("ipv6=" + JSON.stringify(item)));
+    for (let item of ipv6Record.answers) {
+      let newitem = Object.assign({}, item);
+      if (newitem.type == 'A') {
+        newitem.type = 'AAAA';
+        newitem.data = "64:ff9b::" + item.data;
+      }
+      results.ipv6.push(newitem);
+    }
+  }
+
+  return results;
 }
 
 function sendSegment(socket, segment) {
@@ -285,35 +391,13 @@ function sendSegment(socket, segment) {
   socket.write(segment);
 }
 
-function cacheLookup(session, query) {
-  const domain = query.questions[0].name;
-  const qtype  = query.questions[0].type;
-
-  if (qtype == 'AAAA' && session.ipv6) {
-    for (let item of session.ipv6) {
-      if (item.name == domain) {
-	return session.ipv6;
-      }
-    }
-  } else if (qtype == 'A' && session.ipv4) {
-    for (let item of session.ipv4) {
-      if (item.name == domain) {
-	return session.ipv4;
-      }
-    }
-  }
-
-  return;
-}
-
-async function handleRequest(socket) {
+async function* handleRequest(socket) {
 
   let total = 0;
   let segsize = 0;
   let buffers = [];
   let lastbuf = Buffer.alloc(0);
   let ended   = false;
-  let session = {fastCaches: {}, slowCaches: {}};
 
   let onTimeout = v => {
     if (!ended) {
@@ -334,7 +418,7 @@ async function handleRequest(socket) {
     } else {
       buffers.push(data);
     }
-   
+
     console.log('FROM ' + socket.remoteAddress + " port=" + socket.remotePort + " data=" + data.length);
     lastbuf = data;
     ended = false;
@@ -342,7 +426,7 @@ async function handleRequest(socket) {
 
       segsize = buffers[0].readUInt16BE();
       if (segsize + 2 > total) {
-	break;
+        break;
       }
 
       const stream = Buffer.concat(buffers);
@@ -352,65 +436,21 @@ async function handleRequest(socket) {
       lastbuf = Buffer.alloc(0);
 
       if (total > 0) {
-	lastbuf = stream.slice(segsize + 2);
-	buffers.push(lastbuf);
+        lastbuf = stream.slice(segsize + 2);
+        buffers.push(lastbuf);
       }
 
       const fragment = stream.slice(2, segsize + 2);
-      try {
-	let promises = [];
-	const query = dnsp.decode(fragment);
-	const cache = cacheLookup(session, query);
 
-	if (cache) {
-	    let response = Object.assign({}, query);
-	    response.type = "response";
-	    response.answers = cache;
-
-	    const msg = dnsp.encode(response);
-	    sendSegment(socket, msg);
-	} else if (query.questions[0].type == 'AAAA') {
-	    let newq = Object.assign({}, query);
-	    let question0 = Object.assign({}, newq.questions[0]); 
-	    question0.type = 'A';
-	    newq.questions = [question0];
-
-	    promises.push(dnsDispatchQuery(session, dnsp.encode(newq)));
-	    promises.push(dnsDispatchQuery(session, fragment));
-	    await Promise.all(promises);
-
-	    let response = Object.assign({}, query);
-	    response.type = "response";
-	    response.answers = session.ipv6;
-
-	    const msg = dnsp.encode(response);
-	    sendSegment(socket, msg);
-	} else if (query.questions[0].type == 'A') {
-	    let newq = Object.assign({}, query);
-	    let question0 = Object.assign({}, newq.questions[0]); 
-	    question0.type = 'AAAA';
-	    newq.questions = [question0];
-
-	    promises.push(dnsDispatchQuery(session, fragment));
-	    promises.push(dnsDispatchQuery(session, dnsp.encode(newq)));
-	    await Promise.all(promises);
-
-	    let response = Object.assign({}, query);
-	    response.type = "response";
-	    response.answers = session.ipv4;
-
-	    const msg = dnsp.encode(response);
-	    sendSegment(socket, msg);
-	} else {
-	    const msg = await dnsDispatchQuery(session, fragment);
-	    sendSegment(socket, msg);
-	}
-      } catch(e) {
-	let msg = dnsp.decode(fragment);
-	msg.type = "response";
-
-	sendSegment(socket, dnsp.encode(msg));
-	console.log("dns error " + e);
+      const query = dnsp.decode(fragment);
+      if (query.questions[0].type == 'AAAA') {
+        const promise = dnsFetchQuery(fragment);
+        yield [promise, query];
+      } else if (query.questions[0].type == 'A') {
+        const promise = dnsFetchQuery(fragment);
+        yield [promise, query];
+      } else {
+        yield [Promise.resolve(0), query];
       }
 
       ended = false;
@@ -423,29 +463,246 @@ async function handleRequest(socket) {
   // socket.end();
 }
 
+function formatAnswer(answers, domain)
+{
+  let results = [];
+  let key = domain.toLowerCase();
+
+  const cb = item => {
+    let answer = Object.assign({}, item);
+    if (item.name.toLowerCase() == key) {
+      answer.name = domain;
+    }
+    results.push(answer);
+  };
+
+  answers.map(cb);
+  return results;
+}
+
+async function streamHandler(socket) {
+  const generator = handleRequest(socket);
+
+  for await (const [promise, query] of generator) {
+    const session = await promise;
+    const qtype   = query.questions[0].type;
+    if (qtype == 'AAAA') {
+      const results = cacheFilter(session);
+
+      query.answers = formatAnswer(results.ipv6, query.questions[0].name);
+      query.type = "response";
+
+      console.log("R: IPV6 " + JSON.stringify(results.ipv6));
+      sendSegment(socket, dnsp.encode(query));
+    } else if (qtype == 'A') {
+      const results = cacheFilter(session);
+
+      query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+      query.type = "response";
+
+      console.log("R: IPV4 " + JSON.stringify(results.ipv4));
+      sendSegment(socket, dnsp.encode(query));
+    } else {
+      query.answers = [];
+      query.type = "response";
+      sendSegment(socket, dnsp.encode(query));
+    }
+  }
+}
+
 const server = tls.createServer(options, (socket) => {
   console.log('server connected', socket.authorized ? 'authorized' : 'unauthorized');
   const address = socket.remoteAddress;
   socket.on("error", e => console.log("tls error " + e));
   socket.on("close", e => socket.end());
-  handleRequest(socket);
+
+  const _catched = e => {
+    console.log("e = " + e);
+    console.log("    " + e.stack);
+  };
+
+  streamHandler(socket).catch(_catched);
 });
+
 
 server.listen(853, () => {
   console.log('server bound');
 });
 
-const tcpserver = net.createServer(options, (socket) => {
+const tcpserver = net.createServer(options, async (socket) => {
   const address = socket.remoteAddress;
   socket.on("error", e => console.log("tcp error " + e));
   socket.on("close", e => socket.end());
-  handleRequest(socket);
+
+  const _catched = e => {
+    console.log("e = " + e);
+    console.log("    " + e.stack);
+  };
+
+  streamHandler(socket).catch(_catched);
 });
 
 tcpserver.listen(8853, () => {
   console.log('server bound');
 });
 
+function requestEnd(res, body, status = 200, headers = {}) {
+  res.statusCode = status;
+  for (const [k, v] of Object.entries(headers))
+    res.setHeader(k, v);
+  res.end(body);
+  return;
+}
+
+function checkEncyptoClientHelloEnable(answsers) {
+
+  const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
+  return answsers.some(item => item.name.toLowerCase().includes("v2ex.com") || categories.includes(item.name.toLowerCase()));
+/*
+  if (answsers.some(item => isInjectHttps(item.name))) {
+    return true;
+  }
+
+  return answsers.some(item => { if (item.type == "A" || item.type == "AAAA") return table.isGoogleIp(item.data); });
+*/
+}
+
+let FACING_PROMISE = null;
+const FACING_SERVER = "crypto.cloudflare.com";
+
+function facingHttpQuery() {
+  let session = {nearCaches: {}, farCaches: {}};
+  const facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+
+  facingQuery.questions[0].name = FACING_SERVER;
+  facingQuery.questions[0].type = "UNKNOWN_65";
+
+  return FACING_PROMISE = (FACING_PROMISE || dnsDispatchQuery(session, facingQuery));
+}
+
+async function requestFetch(req, res) {
+  const path = req.url;
+
+  var dns_cb = b => {
+    res.statusCode = 200;
+
+    res.setHeader("Server", "cloudflare");
+    res.setHeader("Date", new Date());
+    res.setHeader("Content-Type", "application/dns-message");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Content-Length", b.length);
+
+    res.end(b);
+  };
+
+  if (path.startsWith("/dns-query") && req.method === "POST") {
+
+    const buffers = [];
+    for await (const data of req)
+      buffers.push(data);
+    const fragment = Buffer.concat(buffers);
+
+    const query = dnsp.decode(fragment);
+    const qtype = query.questions[0].type;
+    let results = null, session = {nearCaches: {}, farCaches: {}};
+
+    let filter_facing_cb = item => {
+      let newone = Object.assign({}, item);
+      if (newone.name.toLowerCase() == FACING_SERVER)
+        newone.name = query.questions[0].name;
+      return newone;
+    };
+
+    switch(qtype) {
+      case 'AAAA':
+        session = await dnsFetchQuery(fragment);
+        results = cacheFilter(session);
+
+        query.type = "response";
+        query.answers = formatAnswer(results.ipv6, query.questions[0].name);
+
+        if (checkEncyptoClientHelloEnable(results.ipv6)) {
+          let facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+          facingQuery.questions[0].name = FACING_SERVER;
+          facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
+
+          results = cacheFilter(facingSession);
+          query.answers = results.ipv6.map(filter_facing_cb);
+        }
+
+        dns_cb(dnsp.encode(query));
+        break;
+
+      case 'A':
+        session = await dnsFetchQuery(fragment);
+        results = cacheFilter(session);
+
+        query.type = "response";
+        query.answers = results.ipv4;
+        query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+
+        if (checkEncyptoClientHelloEnable(results.ipv4)) {
+          let facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+          facingQuery.questions[0].name = FACING_SERVER;
+          facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
+
+          results = cacheFilter(facingSession);
+          query.answers = results.ipv4.map(filter_facing_cb);
+        }
+
+        dns_cb(dnsp.encode(query));
+        break;
+
+      default:
+        let mydomain = query.questions[0].name;
+
+        if (qtype == "UNKNOWN_65") {
+
+          const facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+          facingQuery.questions[0].name = mydomain;
+
+          let facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
+          let facingResult = cacheFilter(facingSession);
+
+          if (checkEncyptoClientHelloEnable(facingResult.ipv4) || checkEncyptoClientHelloEnable(facingResult.ipv6)) {
+            results = await facingHttpQuery();
+          }
+        }
+
+        if (!results || !results.farCaches)
+          results = await dnsDispatchQuery(session, query);
+
+        results.farCaches[qtype].answers.map(item => console.log("return=" + JSON.stringify(item)));
+        query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
+        query.type = "response";
+        dns_cb(dnsp.encode(query));
+        break;
+    }
+
+    return;
+  }
+
+  console.log("path=" + path + " method=" + req.method);
+  for (const [k, v] of Object.entries(req.headers)) {
+    console.log("" + k + "=" + v);
+  }
+
+  throw "403 Forbidden";
+}
+
+var httpserver = http.createServer(options, (req, res) => {
+
+  const _catched = e => {
+    console.log("e = " + e);
+    console.log("    " + e.stack);
+    requestEnd(res, "", 500);
+  };
+
+  requestFetch(req, res).catch(_catched);
+});
+
+httpserver.listen(80);
 
 assert(1 == table.lookup4("172.217.163.36"));
 assert(1 == table.lookup6("2404:6800:4003:c02::6a"));
