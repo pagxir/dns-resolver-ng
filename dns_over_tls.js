@@ -165,10 +165,15 @@ function dnsSendQuery(session, client, message) {
           console.log("detect start " + qname);
           const detectMessage = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
           detectMessage.questions[0].name = qname + DETECT_DOMAIN_SUFFIEX;
-          client.send(dnsp.encode(detectMessage), FAR_PORT, FAR_SERVER, (err) => {  });
           fake_request = true;
+
+          const oil_msg = dnsp.encode(detectMessage);
+          let oil_out = v => fake_answered || client.send(oil_msg, FAR_PORT, FAR_SERVER, (err) => {  });
+
+          oil_out();
+          const oil_timeout = setTimeout(oil_out, 300);
         }
-      } else if (rinfo.address == FAR_SERVER) {
+      } else if (rinfo.address == FAR_SERVER && !fake_answered) {
         session.farCaches[msg.questions[0].type] = msg;
         far_answered = true;
       }
@@ -223,7 +228,7 @@ let old_new_stamp = new Date().getTime();
 function sessionCallback(resolv, reject, query) {
   let promises = [];
   const key = query.questions[0].name.toLowerCase();
-  let session = {nearCaches: {}, farCaches: {}, key: key};
+  let session = {nearCaches: {}, farCaches: {}, "key": key};
 
   let newq = dnsp.decode(dnsp.encode(query));
   let question0 = Object.assign({}, newq.questions[0]); 
@@ -250,7 +255,7 @@ function isInjectHttps(domain)
 {
    let lowerDomain = domain.toLowerCase();
 
-   const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.reddit.com", "app.cootail.com", "www.quora.com"];
+   const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
 
    return categories.includes(lowerDomain) || DETECHCACHE[lowerDomain] && DETECHCACHE[lowerDomain] == "cachedBad";
 }
@@ -358,7 +363,7 @@ function cacheFilter(session) {
   let results = {ipv4: [], ipv6: []};
   mainPref = ipv4Pref > ipv6Pref? ipv6Pref: ipv4Pref;
 
-  console.log("ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
+  console.log("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
   if (ipv4Pref <= mainPref) {
     ipv4Record.answers.map(item => console.log("ipv4=" + JSON.stringify(item)));
     for (let item of ipv4Record.answers) {
@@ -372,10 +377,6 @@ function cacheFilter(session) {
     ipv6Record.answers.map(item => console.log("ipv6=" + JSON.stringify(item)));
     for (let item of ipv6Record.answers) {
       let newitem = Object.assign({}, item);
-      if (newitem.type == 'A') {
-        newitem.type = 'AAAA';
-        newitem.data = "64:ff9b::" + item.data;
-      }
       results.ipv6.push(newitem);
     }
   }
@@ -463,21 +464,43 @@ async function* handleRequest(socket) {
   // socket.end();
 }
 
-function formatAnswer(answers, domain)
-{
-  let results = [];
+const NAT64_PREFIX = "64:ff9b::";
+
+function formatAnswer6(answers, domain) {
   let key = domain.toLowerCase();
 
   const cb = item => {
     let answer = Object.assign({}, item);
+
     if (item.name.toLowerCase() == key) {
       answer.name = domain;
     }
-    results.push(answer);
+
+    if (item.type == 'A') {
+      answer.data = NAT64_PREFIX + item.data;
+      answer.type = "AAAA";
+    }
+
+    return answer;
   };
 
-  answers.map(cb);
-  return results;
+  return answers.map(cb);
+}
+
+function formatAnswer(answers, domain) {
+  let key = domain.toLowerCase();
+
+  const cb = item => {
+    let answer = Object.assign({}, item);
+
+    if (item.name.toLowerCase() == key) {
+      answer.name = domain;
+    }
+
+    return answer;
+  };
+
+  return answers.map(cb);
 }
 
 async function streamHandler(socket) {
@@ -489,7 +512,7 @@ async function streamHandler(socket) {
     if (qtype == 'AAAA') {
       const results = cacheFilter(session);
 
-      query.answers = formatAnswer(results.ipv6, query.questions[0].name);
+      query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
       query.type = "response";
 
       console.log("R: IPV6 " + JSON.stringify(results.ipv6));
@@ -525,7 +548,7 @@ const server = tls.createServer(options, (socket) => {
 });
 
 
-server.listen(853, () => {
+server.listen(853, "127.9.9.9", () => {
   console.log('server bound');
 });
 
@@ -554,17 +577,19 @@ function requestEnd(res, body, status = 200, headers = {}) {
   return;
 }
 
-function checkEncyptoClientHelloEnable(answsers) {
-
+function checkEncryptedClientHelloEnable(answsers) {
   const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
   return answsers.some(item => item.name.toLowerCase().includes("v2ex.com") || categories.includes(item.name.toLowerCase()));
-/*
-  if (answsers.some(item => isInjectHttps(item.name))) {
+
+  if (answsers.some(item => isInjectHttps(item.name.toLowerCase()))) {
     return true;
   }
 
+  if (answsers.some(item => "www.gstatic.com" == (item.name.toLowerCase()))) {
+    return false;
+  }
+
   return answsers.some(item => { if (item.type == "A" || item.type == "AAAA") return table.isGoogleIp(item.data); });
-*/
 }
 
 let FACING_PROMISE = null;
@@ -614,23 +639,29 @@ async function requestFetch(req, res) {
       return newone;
     };
 
+    console.log("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
+
     switch(qtype) {
       case 'AAAA':
         session = await dnsFetchQuery(fragment);
         results = cacheFilter(session);
 
         query.type = "response";
-        query.answers = formatAnswer(results.ipv6, query.questions[0].name);
+        query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
 
-        if (checkEncyptoClientHelloEnable(results.ipv6)) {
+        if (checkEncryptedClientHelloEnable(results.ipv4) || checkEncryptedClientHelloEnable(results.ipv6)) {
           let facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
           facingQuery.questions[0].name = FACING_SERVER;
           facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
 
           results = cacheFilter(facingSession);
           query.answers = results.ipv6.map(filter_facing_cb);
+          if (query.answers.some(item => item.type == "A")) query.answers = [];
+          query.answers.map(item => console.log("return6=" + JSON.stringify(item)));
         }
 
+        console.log("RESPONSE6: " + query.questions[0].name);
+        query.answers.map(item => console.log("out6=" + JSON.stringify(item)));
         dns_cb(dnsp.encode(query));
         break;
 
@@ -642,15 +673,18 @@ async function requestFetch(req, res) {
         query.answers = results.ipv4;
         query.answers = formatAnswer(results.ipv4, query.questions[0].name);
 
-        if (checkEncyptoClientHelloEnable(results.ipv4)) {
+        if (checkEncryptedClientHelloEnable(results.ipv4) || checkEncryptedClientHelloEnable(results.ipv6)) {
           let facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
           facingQuery.questions[0].name = FACING_SERVER;
           facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
 
           results = cacheFilter(facingSession);
           query.answers = results.ipv4.map(filter_facing_cb);
+          query.answers.map(item => console.log("return4=" + JSON.stringify(item)));
         }
 
+        console.log("RESPONSE4: " + query.questions[0].name);
+        query.answers.map(item => console.log("out4=" + JSON.stringify(item)));
         dns_cb(dnsp.encode(query));
         break;
 
@@ -665,7 +699,7 @@ async function requestFetch(req, res) {
           let facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
           let facingResult = cacheFilter(facingSession);
 
-          if (checkEncyptoClientHelloEnable(facingResult.ipv4) || checkEncyptoClientHelloEnable(facingResult.ipv6)) {
+          if (checkEncryptedClientHelloEnable(facingResult.ipv4) || checkEncryptedClientHelloEnable(facingResult.ipv6)) {
             results = await facingHttpQuery();
           }
         }
@@ -673,9 +707,11 @@ async function requestFetch(req, res) {
         if (!results || !results.farCaches)
           results = await dnsDispatchQuery(session, query);
 
-        results.farCaches[qtype].answers.map(item => console.log("return=" + JSON.stringify(item)));
         query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
         query.type = "response";
+
+        console.log("RESPONSE: " + query.questions[0].name);
+        query.answers.map(item => console.log("return=" + JSON.stringify(item)));
         dns_cb(dnsp.encode(query));
         break;
     }
