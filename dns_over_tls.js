@@ -92,11 +92,11 @@ const NEAR_SERVER = "::ffff:223.5.5.5";
 const IPV4_NEAR_PREFERENE = 1;
 const IPV4_FAR_PREFERENE  = 3;
 
-const IPV6_NEAR_PREFERENE = 1;
+const IPV6_NEAR_PREFERENE = 2;
 const IPV6_FAR_PREFERENE  = 3;
 
 const NAT64_NEAR_PREFERENE = 8;
-const NAT64_FAR_PREFERENE  = 7;
+const NAT64_FAR_PREFERENE  = 3;
 
 const INVALIDE_PREFERENE   = 100;
 const DETECT_DOMAIN_SUFFIEX = ".oil.cootail.com";
@@ -257,7 +257,7 @@ function isInjectHttps(domain)
 
    const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
 
-   return categories.includes(lowerDomain) || DETECHCACHE[lowerDomain] && DETECHCACHE[lowerDomain] == "cachedBad";
+   return categories.includes(lowerDomain);
 }
 
 function dnsFetchQuery(fragment) {
@@ -373,7 +373,7 @@ function cacheFilter(session) {
   }
 
   results.ipv6 = [];
-  if (ipv6Pref <= mainPref || ipv6Record && ipv6Record.questions[0].name.toLowerCase().includes("gstatic.com")) {
+  if (ipv6Pref <= mainPref) {
     ipv6Record.answers.map(item => console.log("ipv6=" + JSON.stringify(item)));
     for (let item of ipv6Record.answers) {
       let newitem = Object.assign({}, item);
@@ -540,8 +540,7 @@ const server = tls.createServer(options, (socket) => {
   socket.on("close", e => socket.end());
 
   const _catched = e => {
-    console.log("e = " + e);
-    console.log("    " + e.stack);
+    console.log("e = " + JSON.stringify(e));
   };
 
   streamHandler(socket).catch(_catched);
@@ -558,8 +557,7 @@ const tcpserver = net.createServer(options, async (socket) => {
   socket.on("close", e => socket.end());
 
   const _catched = e => {
-    console.log("e = " + e);
-    console.log("    " + e.stack);
+    console.log("e = " + JSON.stringify(e));
   };
 
   streamHandler(socket).catch(_catched);
@@ -586,6 +584,10 @@ function checkEncryptedClientHelloEnable(answsers) {
   }
 
   if (answsers.some(item => "www.gstatic.com" == (item.name.toLowerCase()))) {
+    return false;
+  }
+
+  if (answsers.some(item => "google.com" == (item.name.toLowerCase()))) {
     return false;
   }
 
@@ -730,8 +732,7 @@ async function requestFetch(req, res) {
 var httpserver = http.createServer(options, (req, res) => {
 
   const _catched = e => {
-    console.log("e = " + e);
-    console.log("    " + e.stack);
+    console.log("e = " + JSON.stringify(e));
     requestEnd(res, "", 500);
   };
 
