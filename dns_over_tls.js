@@ -266,12 +266,6 @@ function dnsFetchQuery(fragment) {
   const domain = query.questions[0].name;
   const key = domain.toLowerCase();
 
-  if (OLD_SESSION[key])
-    return OLD_SESSION[key];
-
-  if (NEW_SESSION[key])
-    return NEW_SESSION[key];
-
   const stamp = new Date().getTime();
 
   if (old_new_stamp + 5000 < stamp) {
@@ -284,6 +278,16 @@ function dnsFetchQuery(fragment) {
     }
     console.log("old session select " + (SESSION === OLD_SESSION));
     console.log("new session select " + (SESSION === NEW_SESSION));
+  }
+
+  if (OLD_SESSION[key]) {
+    SESSION == OLD_SESSION || (SESSION[key] = OLD_SESSION[key]);
+    return OLD_SESSION[key];
+  }
+
+  if (NEW_SESSION[key]) {
+    SESSION == NEW_SESSION || (SESSION[key] = NEW_SESSION[key]);
+    return NEW_SESSION[key];
   }
 
   const cb = (resolv, reject) => sessionCallback(resolv, reject, query);
@@ -362,8 +366,12 @@ function cacheFilter(session) {
 
   let results = {ipv4: [], ipv6: []};
   mainPref = ipv4Pref > ipv6Pref? ipv6Pref: ipv4Pref;
-
   console.log("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
+
+  if (mainPref == INVALIDE_PREFERENE) {
+	return results;
+  }
+
   if (ipv4Pref <= mainPref) {
     ipv4Record.answers.map(item => console.log("ipv4=" + JSON.stringify(item)));
     for (let item of ipv4Record.answers) {
