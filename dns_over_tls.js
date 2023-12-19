@@ -430,7 +430,6 @@ async function* handleRequest(socket) {
   let total = 0;
   let segsize = 0;
   let buffers = [];
-  let lastbuf = Buffer.alloc(0);
   let ended   = false;
 
   let onTimeout = v => {
@@ -446,17 +445,16 @@ async function* handleRequest(socket) {
   LOG_DEBUG('FROM ' + socket.remoteAddress + " port=" + socket.remotePort);
   for await (const data of socket) {
     total += data.length;
-
-    if (data.length < 2) {
-      lastbuf += data;
-    } else {
-      buffers.push(data);
-    }
+    buffers.push(data);
 
     LOG_DEBUG('FROM ' + socket.remoteAddress + " port=" + socket.remotePort + " data=" + data.length);
-    lastbuf = data;
     ended = false;
     while (total >= 2) {
+
+      if (buffers[0].length < 2) {
+        const stream = Buffer.concat(buffers);
+        buffers = [stream];
+      }
 
       segsize = buffers[0].readUInt16BE();
       if (segsize + 2 > total) {
@@ -467,10 +465,9 @@ async function* handleRequest(socket) {
 
       buffers = [];
       total -= (segsize + 2);
-      lastbuf = Buffer.alloc(0);
 
       if (total > 0) {
-        lastbuf = stream.slice(segsize + 2);
+        let lastbuf = stream.slice(segsize + 2);
         buffers.push(lastbuf);
       }
 
@@ -886,7 +883,7 @@ async function requestFetch(req, res) {
 var httpserver = http.createServer(options, (req, res) => {
 
   const _catched = e => {
-    LOG_DEBUG("e = " + JSON.stringify(e));
+    LOG_DEBUG("e = " + e);
     requestEnd(res, "", 500);
   };
 
