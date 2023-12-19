@@ -278,6 +278,9 @@ function getSession(key) {
     session.nearCaches['AAAA'] = emptyResponse;
     session.farCaches['A'] = emptyResponse;
     session.farCaches['AAAA'] = emptyResponse;
+
+    session.types['AAAA'] =  "DONE";
+    session.types['A'] =  "DONE";
   }
 
   return session;
@@ -606,7 +609,8 @@ const server = tls.createServer(options, (socket) => {
   socket.on("close", e => socket.end());
 
   const _catched = e => {
-    LOG_ERROR("e = " + JSON.stringify(e));
+    LOG_ERROR("e = " + e);
+    LOG_ERROR(" " + e.stack);
   };
 
   streamHandler(socket).catch(_catched);
@@ -623,7 +627,8 @@ const tcpserver = net.createServer(options, async (socket) => {
   socket.on("close", e => socket.end());
 
   const _catched = e => {
-    LOG_ERROR("e = " + JSON.stringify(e));
+    LOG_ERROR("e = " + e);
+    LOG_ERROR(" " + e.stack);
   };
 
   streamHandler(socket).catch(_catched);
@@ -688,6 +693,75 @@ async function requestFetch(req, res) {
 
     res.end(b);
   };
+
+  if (path.startsWith("/dns-query") && req.method === "GET") {
+    console.log("path=" + path);
+    if (path.includes("?")) {
+      const pairs = querystring.parse(path.split("?")[1]);
+      console.log("dns=" + pairs.dns);
+      const fragment = Buffer.from(pairs.dns, 'base64');
+      const query = dnsp.decode(fragment);
+      const qtype = query.questions[0].type;
+      let results = null, session = {nearCaches: {}, farCaches: {}};
+
+      LOG_DEBUG("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
+
+      switch(qtype) {
+        case 'AAAA':
+          session = await dnsFetchQuery(fragment);
+          results = cacheFilter(session);
+
+          query.type = "response";
+          query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+
+          LOG_DEBUG("RESPONSE6: " + query.questions[0].name);
+          query.answers.map(item => LOG_DEBUG("out6=" + JSON.stringify(item)));
+          dns_cb(dnsp.encode(query));
+          break;
+
+        case 'A':
+          session = await dnsFetchQuery(fragment);
+          results = cacheFilter(session);
+
+          query.type = "response";
+          query.answers = results.ipv4;
+          query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+
+          LOG_DEBUG("RESPONSE4: " + query.questions[0].name);
+          query.answers.map(item => LOG_DEBUG("out4=" + JSON.stringify(item)));
+          dns_cb(dnsp.encode(query));
+          break;
+
+        default:
+          let mydomain = query.questions[0].name;
+
+          if (!results || !results.farCaches)
+            results = await dnsDispatchQuery(session, query);
+
+          query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
+          query.type = "response";
+
+          LOG_DEBUG("RESPONSE: " + query.questions[0].name);
+          query.answers.map(item => LOG_DEBUG("return=" + JSON.stringify(item)));
+          dns_cb(dnsp.encode(query));
+          break;
+      }
+
+      return;
+    }
+
+    res.statusCode = 403;
+
+    res.setHeader("Server", "cloudflare");
+    res.setHeader("Date", new Date());
+    res.setHeader("Content-Type", "application/dns-message");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Content-Length", 0);
+
+    res.end();
+    return;
+  }
 
   if (path.startsWith("/dns-query") && req.method === "POST") {
 
@@ -794,7 +868,19 @@ async function requestFetch(req, res) {
     LOG_DEBUG("" + k + "=" + v);
   }
 
-  throw "403 Forbidden";
+  {
+    res.statusCode = 200;
+
+    res.setHeader("Server", "cloudflare");
+    res.setHeader("Date", new Date());
+    res.setHeader("Content-Type", "text/html");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    const b = "<html/>"
+    res.setHeader("Content-Length", b.length);
+
+    res.end(b);
+  }
 }
 
 var httpserver = http.createServer(options, (req, res) => {
