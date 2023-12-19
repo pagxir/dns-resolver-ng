@@ -225,32 +225,6 @@ let NEW_SESSION = {};
 let SESSION = OLD_SESSION;
 let old_new_stamp = new Date().getTime();
 
-function sessionCallback(resolv, reject, query) {
-  let promises = [];
-  const key = query.questions[0].name.toLowerCase();
-  let session = {nearCaches: {}, farCaches: {}, "key": key};
-
-  let newq = dnsp.decode(dnsp.encode(query));
-  let question0 = Object.assign({}, newq.questions[0]); 
-
-  if (query.questions[0].type == 'AAAA') {
-    question0.type = 'A';
-    newq.questions = [question0];
-
-    promises.push(dnsDispatchQuery(session, newq));
-    promises.push(dnsDispatchQuery(session, query));
-  } else if (query.questions[0].type == 'A') {
-    let question0 = Object.assign({}, newq.questions[0]); 
-    question0.type = 'AAAA';
-    newq.questions = [question0];
-
-    promises.push(dnsDispatchQuery(session, newq));
-    promises.push(dnsDispatchQuery(session, query));
-  }
-
-  Promise.all(promises).then(v => resolv(session), reject);
-};
-
 function isInjectHttps(domain)
 {
    let lowerDomain = domain.toLowerCase();
@@ -260,11 +234,7 @@ function isInjectHttps(domain)
    return categories.includes(lowerDomain);
 }
 
-function dnsFetchQuery(fragment) {
-
-  const query = dnsp.decode(fragment);
-  const domain = query.questions[0].name;
-  const key = domain.toLowerCase();
+function getSession(key) {
 
   const stamp = new Date().getTime();
 
@@ -276,8 +246,6 @@ function dnsFetchQuery(fragment) {
       SESSION = OLD_SESSION = {};
       old_new_stamp = stamp;
     }
-    console.log("old session select " + (SESSION === OLD_SESSION));
-    console.log("new session select " + (SESSION === NEW_SESSION));
   }
 
   if (OLD_SESSION[key]) {
@@ -290,9 +258,58 @@ function dnsFetchQuery(fragment) {
     return NEW_SESSION[key];
   }
 
-  const cb = (resolv, reject) => sessionCallback(resolv, reject, query);
-  SESSION[key] = new Promise(cb);
-  return SESSION[key];
+  let session = {nearCaches: {}, farCaches: {}, types: {}, key: key};
+  SESSION[key] = session;
+
+  if (key == "mtalk.google.com") {
+    let fakeResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    fakeResponse.questions[0].name = key;
+    session.nearCaches['A'] = fakeResponse;
+    fakeResponse.answers = [{"name":domain,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
+
+    let emptyResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    emptyResponse.questions[0].name = key;
+
+    session.nearCaches['AAAA'] = emptyResponse;
+    session.farCaches['A'] = emptyResponse;
+    session.farCaches['AAAA'] = emptyResponse;
+  }
+
+  return session;
+}
+
+function dnsFetchQuery(fragment) {
+
+  const query = dnsp.decode(fragment);
+  const domain = query.questions[0].name;
+  const qtype  = query.questions[0].type;
+
+  const session = getSession(domain.toLowerCase());
+
+  if (!Object.values(session.types).includes("PENDING")) {
+    session.promise = new Promise((resolv, reject) => {
+      session.resolv = resolv;
+      session.reject = reject;
+    });
+  }
+
+  if (qtype in session.types)
+    console.log("types " + qtype + " = " + session.types[qtype])
+  else
+    session.types[qtype] = "PENDING"
+
+  if (!Object.values(session.types).includes("PENDING"))
+    return Promise.resolve(session)
+
+  const callback = v => {
+    session.types[qtype] = "DONE";
+    if (!Object.values(session.types).includes("PENDING")) {
+      session.resolv(session);
+    }
+  }
+
+  dnsDispatchQuery(session, query).then(callback, session.reject);
+  return session.promise;
 }
 
 function preference(json, prefMaps) {
@@ -366,10 +383,10 @@ function cacheFilter(session) {
 
   let results = {ipv4: [], ipv6: []};
   mainPref = ipv4Pref > ipv6Pref? ipv6Pref: ipv4Pref;
-  console.log("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
 
+  console.log("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
   if (mainPref == INVALIDE_PREFERENE) {
-	return results;
+    return results;
   }
 
   if (ipv4Pref <= mainPref) {
@@ -459,7 +476,9 @@ async function* handleRequest(socket) {
         const promise = dnsFetchQuery(fragment);
         yield [promise, query];
       } else {
-        yield [Promise.resolve(0), query];
+	let  session = {nearCaches: {}, farCaches: {}};
+        const promise = dnsDispatchQuery(session, query);
+        yield [promise, query];
       }
 
       ended = false;
@@ -514,8 +533,7 @@ function formatAnswer(answers, domain) {
 async function streamHandler(socket) {
   const generator = handleRequest(socket);
 
-  for await (const [promise, query] of generator) {
-    const session = await promise;
+  const backcall = (session, query) => {
     const qtype   = query.questions[0].type;
     if (qtype == 'AAAA') {
       const results = cacheFilter(session);
@@ -534,10 +552,29 @@ async function streamHandler(socket) {
       console.log("R: IPV4 " + JSON.stringify(results.ipv4));
       sendSegment(socket, dnsp.encode(query));
     } else {
-      query.answers = [];
+      console.log("R: OUTE ");
+      query.answers = session.farCaches[qtype].answers;
       query.type = "response";
       sendSegment(socket, dnsp.encode(query));
     }
+  }
+
+  let pendings = []
+
+  const flush_pendings = (session, one) => {
+    one.session = session
+    one.state = "DONE"
+
+    while (pendings.length > 0 && pendings[0].state == "DONE") {
+      let two = pendings.shift()
+      backcall(two.session, two.query)
+    }
+  }
+
+  for await (const [promise, query] of generator) {
+    const one = {query: query, state: "PENDING"}
+    pendings.push(one)
+    promise.then(session => flush_pendings(session, one))
   }
 }
 
@@ -644,8 +681,10 @@ async function requestFetch(req, res) {
 
     let filter_facing_cb = item => {
       let newone = Object.assign({}, item);
-      if (newone.name.toLowerCase() == FACING_SERVER)
+      if (newone.name.toLowerCase() == FACING_SERVER) {
         newone.name = query.questions[0].name;
+        newone.ttl = 600;
+      }
       return newone;
     };
 
