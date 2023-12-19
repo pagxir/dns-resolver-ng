@@ -6,6 +6,7 @@ const dgram = require('dgram');
 const table = require('./apnic-table-6');
 const dnsp = require('dns-packet');
 const assert = require('assert');
+const querystring = require('querystring');
 
 const options = {
   key: fs.readFileSync('certificate/tls.key'),
@@ -16,6 +17,10 @@ const options = {
 
 let dumpFirst = 0;
 // if (table.lookup());
+
+// const LOG_DEBUG = () => {};
+const LOG_ERROR = console.log;
+const LOG_DEBUG = console.log;
 
 const additionals_with_subnet = {
   name: ".",
@@ -140,8 +145,8 @@ function dnsSendQuery(session, client, message) {
   const onMessage = function(resolv) {
     return (segment, rinfo) => {
       let msg = dnsp.decode(segment);
-      // console.log("response " + JSON.stringify(msg));
-      // console.log("rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
+      // LOG_DEBUG("response " + JSON.stringify(msg));
+      // LOG_DEBUG("rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
 
       const qname = msg.questions[0].name;
       if (fake_request && qname.endsWith(DETECT_DOMAIN_SUFFIEX)) {
@@ -149,10 +154,10 @@ function dnsSendQuery(session, client, message) {
         const originName = qname.replace(DETECT_DOMAIN_SUFFIEX, "").toLowerCase();
 
         if (msg.answers.find(item => item.type == 'A' && item.data == "127.127.127.127")) {
-          console.log("cachedOK " + originName);
+          LOG_DEBUG("cachedOK " + originName);
           DETECHCACHE[originName] = "cachedOK";
         } else if (msg.answers.find(item => item.type == 'A' && item.data != "127.127.127.127")) {
-          console.log("cachedBad " + originName);
+          LOG_DEBUG("cachedBad " + originName);
           DETECHCACHE[originName] = "cachedBad";
         }
 
@@ -162,7 +167,7 @@ function dnsSendQuery(session, client, message) {
         session.nearCaches[msg.questions[0].type] = msg;
         /*"Ok":"cachedOK":"cachedBad": */
         if (getDetectStatus(msg) == "Chaos") {
-          console.log("detect start " + qname);
+          LOG_DEBUG("detect start " + qname);
           const detectMessage = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
           detectMessage.questions[0].name = qname + DETECT_DOMAIN_SUFFIEX;
           fake_request = true;
@@ -178,7 +183,7 @@ function dnsSendQuery(session, client, message) {
         far_answered = true;
       }
 
-      // console.log("slow_answer " + far_answered + " fast_answer " + near_answered);
+      // LOG_DEBUG("slow_answer " + far_answered + " fast_answer " + near_answered);
       if (far_answered && near_answered && fake_request == fake_answered) {
         resolv(session);
       }
@@ -191,11 +196,11 @@ function dnsSendQuery(session, client, message) {
 
   // dnsSetClientSubnet(msg, "103.70.115.29");
   const far_msg = dnsp.encode(msg);
-  let far_out = v => far_answered || client.send(far_msg, FAR_PORT, FAR_SERVER, (err) => { console.log(` far send: ${qname} ${type} ${err}`); });
+  let far_out = v => far_answered || client.send(far_msg, FAR_PORT, FAR_SERVER, (err) => { LOG_DEBUG(` far send: ${qname} ${type} ${err}`); });
 
   dnsSetClientSubnet(msg, "117.144.103.197");
   const near_msg = dnsp.encode(msg);
-  let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { console.log(`near send: ${qname} ${type} ${err}`); });
+  let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
 
   near_out();
   const near_timeout = setTimeout(near_out, 300);
@@ -215,7 +220,7 @@ function dnsSendQuery(session, client, message) {
 function dnsDispatchQuery(session, message) {
   const client = dgram.createSocket('udp6');
 
-  console.log("QUERY " + JSON.stringify(message.questions[0]));
+  LOG_DEBUG("QUERY " + JSON.stringify(message.questions[0]));
   return dnsSendQuery(session, client, message).finally(v => client.close());
 }
 
@@ -294,7 +299,7 @@ function dnsFetchQuery(fragment) {
   }
 
   if (qtype in session.types)
-    console.log("types " + qtype + " = " + session.types[qtype])
+    LOG_DEBUG("types " + qtype + " = " + session.types[qtype])
   else
     session.types[qtype] = "PENDING"
 
@@ -318,11 +323,11 @@ function preference(json, prefMaps) {
   if (json && json.answers) {
     for (item of json.answers) {
       if (item.type == 'AAAA') {
-        // console.log("item6.name " + item.name + " table=" + table.lookup6(item.data) + " data=" + item.data);
+        // LOG_DEBUG("item6.name " + item.name + " table=" + table.lookup6(item.data) + " data=" + item.data);
         pref = prefMaps[table.lookup6(item.data)];
         if (pref < best) best = pref;
       } else if (item.type == 'A') {
-        // console.log("item4.name " + item.name + " table=" + table.lookup4(item.data) + " data=" + item.data);
+        // LOG_DEBUG("item4.name " + item.name + " table=" + table.lookup4(item.data) + " data=" + item.data);
         pref = prefMaps[table.lookup4(item.data)];
         if (pref < best) best = pref;
       }
@@ -348,14 +353,14 @@ function cacheFilter(session) {
     ipv6Pref = pref;
     ipv6Record = ipv6Near;
   }
-  // ipv6Near.answers.map(i => console.log("near " + JSON.stringify(i)));
+  // ipv6Near.answers.map(i => LOG_DEBUG("near " + JSON.stringify(i)));
 
   pref = preference(ipv6Far, [INVALIDE_PREFERENE, IPV6_FAR_PREFERENE]);
   if (pref <= ipv6Pref) {
     ipv6Pref = pref;
     ipv6Record = ipv6Far;
   }
-  // ipv6Far.answers.map(i => console.log("far_ " + JSON.stringify(i)));
+  // ipv6Far.answers.map(i => LOG_DEBUG("far_ " + JSON.stringify(i)));
 
   pref = preference(ipv4Near, [IPV4_NEAR_PREFERENE, INVALIDE_PREFERENE]);
   if (pref <= ipv4Pref && isNearGood) {
@@ -384,13 +389,13 @@ function cacheFilter(session) {
   let results = {ipv4: [], ipv6: []};
   mainPref = ipv4Pref > ipv6Pref? ipv6Pref: ipv4Pref;
 
-  console.log("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
+  LOG_DEBUG("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
   if (mainPref == INVALIDE_PREFERENE) {
     return results;
   }
 
   if (ipv4Pref <= mainPref) {
-    ipv4Record.answers.map(item => console.log("ipv4=" + JSON.stringify(item)));
+    ipv4Record.answers.map(item => LOG_DEBUG("ipv4=" + JSON.stringify(item)));
     for (let item of ipv4Record.answers) {
       let newitem = Object.assign({}, item);
       results.ipv4.push(newitem);
@@ -399,7 +404,7 @@ function cacheFilter(session) {
 
   results.ipv6 = [];
   if (ipv6Pref <= mainPref) {
-    ipv6Record.answers.map(item => console.log("ipv6=" + JSON.stringify(item)));
+    ipv6Record.answers.map(item => LOG_DEBUG("ipv6=" + JSON.stringify(item)));
     for (let item of ipv6Record.answers) {
       let newitem = Object.assign({}, item);
       results.ipv6.push(newitem);
@@ -435,7 +440,7 @@ async function* handleRequest(socket) {
 
   let timer = setInterval(onTimeout, 15000);
 
-  console.log('FROM ' + socket.remoteAddress + " port=" + socket.remotePort);
+  LOG_DEBUG('FROM ' + socket.remoteAddress + " port=" + socket.remotePort);
   for await (const data of socket) {
     total += data.length;
 
@@ -445,7 +450,7 @@ async function* handleRequest(socket) {
       buffers.push(data);
     }
 
-    console.log('FROM ' + socket.remoteAddress + " port=" + socket.remotePort + " data=" + data.length);
+    LOG_DEBUG('FROM ' + socket.remoteAddress + " port=" + socket.remotePort + " data=" + data.length);
     lastbuf = data;
     ended = false;
     while (total >= 2) {
@@ -485,7 +490,7 @@ async function* handleRequest(socket) {
     }
   }
 
-  console.log("session ended");
+  LOG_DEBUG("session ended");
   if (!ended) socket.end();
   clearInterval(timer);
   // socket.end();
@@ -530,6 +535,21 @@ function formatAnswer(answers, domain) {
   return answers.map(cb);
 }
 
+function preNat64Load(query) {
+  const query64 = {
+    type: 'query',
+    id: 1,
+    flags: dnsp.RECURSION_DESIRED,
+    questions: [{
+      type: 'A',
+      name: query.questions[0].name
+    }]
+  }
+
+  const qtype   = query.questions[0].type;
+  if (qtype == 'AAAA') dnsFetchQuery(dnsp.encode(query64));
+}
+
 async function streamHandler(socket) {
   const generator = handleRequest(socket);
 
@@ -541,7 +561,7 @@ async function streamHandler(socket) {
       query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
       query.type = "response";
 
-      console.log("R: IPV6 " + JSON.stringify(results.ipv6));
+      LOG_DEBUG("R: IPV6 " + JSON.stringify(results.ipv6));
       sendSegment(socket, dnsp.encode(query));
     } else if (qtype == 'A') {
       const results = cacheFilter(session);
@@ -549,10 +569,10 @@ async function streamHandler(socket) {
       query.answers = formatAnswer(results.ipv4, query.questions[0].name);
       query.type = "response";
 
-      console.log("R: IPV4 " + JSON.stringify(results.ipv4));
+      LOG_DEBUG("R: IPV4 " + JSON.stringify(results.ipv4));
       sendSegment(socket, dnsp.encode(query));
     } else {
-      console.log("R: OUTE ");
+      LOG_DEBUG("R: OUTE ");
       query.answers = session.farCaches[qtype].answers;
       query.type = "response";
       sendSegment(socket, dnsp.encode(query));
@@ -574,18 +594,19 @@ async function streamHandler(socket) {
   for await (const [promise, query] of generator) {
     const one = {query: query, state: "PENDING"}
     pendings.push(one)
+    preNat64Load(query);
     promise.then(session => flush_pendings(session, one))
   }
 }
 
 const server = tls.createServer(options, (socket) => {
-  console.log('server connected', socket.authorized ? 'authorized' : 'unauthorized');
+  LOG_DEBUG('server connected', socket.authorized ? 'authorized' : 'unauthorized');
   const address = socket.remoteAddress;
-  socket.on("error", e => console.log("tls error " + e));
+  socket.on("error", e => LOG_DEBUG("tls error " + e));
   socket.on("close", e => socket.end());
 
   const _catched = e => {
-    console.log("e = " + JSON.stringify(e));
+    LOG_ERROR("e = " + JSON.stringify(e));
   };
 
   streamHandler(socket).catch(_catched);
@@ -593,23 +614,23 @@ const server = tls.createServer(options, (socket) => {
 
 
 server.listen(853, "127.9.9.9", () => {
-  console.log('server bound');
+  LOG_DEBUG('server bound');
 });
 
 const tcpserver = net.createServer(options, async (socket) => {
   const address = socket.remoteAddress;
-  socket.on("error", e => console.log("tcp error " + e));
+  socket.on("error", e => LOG_DEBUG("tcp error " + e));
   socket.on("close", e => socket.end());
 
   const _catched = e => {
-    console.log("e = " + JSON.stringify(e));
+    LOG_ERROR("e = " + JSON.stringify(e));
   };
 
   streamHandler(socket).catch(_catched);
 });
 
 tcpserver.listen(8853, () => {
-  console.log('server bound');
+  LOG_DEBUG('server bound');
 });
 
 function requestEnd(res, body, status = 200, headers = {}) {
@@ -688,7 +709,7 @@ async function requestFetch(req, res) {
       return newone;
     };
 
-    console.log("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
+    LOG_DEBUG("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
 
     switch(qtype) {
       case 'AAAA':
@@ -706,11 +727,11 @@ async function requestFetch(req, res) {
           results = cacheFilter(facingSession);
           query.answers = results.ipv6.map(filter_facing_cb);
           if (query.answers.some(item => item.type == "A")) query.answers = [];
-          query.answers.map(item => console.log("return6=" + JSON.stringify(item)));
+          query.answers.map(item => LOG_DEBUG("return6=" + JSON.stringify(item)));
         }
 
-        console.log("RESPONSE6: " + query.questions[0].name);
-        query.answers.map(item => console.log("out6=" + JSON.stringify(item)));
+        LOG_DEBUG("RESPONSE6: " + query.questions[0].name);
+        query.answers.map(item => LOG_DEBUG("out6=" + JSON.stringify(item)));
         dns_cb(dnsp.encode(query));
         break;
 
@@ -729,11 +750,11 @@ async function requestFetch(req, res) {
 
           results = cacheFilter(facingSession);
           query.answers = results.ipv4.map(filter_facing_cb);
-          query.answers.map(item => console.log("return4=" + JSON.stringify(item)));
+          query.answers.map(item => LOG_DEBUG("return4=" + JSON.stringify(item)));
         }
 
-        console.log("RESPONSE4: " + query.questions[0].name);
-        query.answers.map(item => console.log("out4=" + JSON.stringify(item)));
+        LOG_DEBUG("RESPONSE4: " + query.questions[0].name);
+        query.answers.map(item => LOG_DEBUG("out4=" + JSON.stringify(item)));
         dns_cb(dnsp.encode(query));
         break;
 
@@ -759,8 +780,8 @@ async function requestFetch(req, res) {
         query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
         query.type = "response";
 
-        console.log("RESPONSE: " + query.questions[0].name);
-        query.answers.map(item => console.log("return=" + JSON.stringify(item)));
+        LOG_DEBUG("RESPONSE: " + query.questions[0].name);
+        query.answers.map(item => LOG_DEBUG("return=" + JSON.stringify(item)));
         dns_cb(dnsp.encode(query));
         break;
     }
@@ -768,9 +789,9 @@ async function requestFetch(req, res) {
     return;
   }
 
-  console.log("path=" + path + " method=" + req.method);
+  LOG_DEBUG("path=" + path + " method=" + req.method);
   for (const [k, v] of Object.entries(req.headers)) {
-    console.log("" + k + "=" + v);
+    LOG_DEBUG("" + k + "=" + v);
   }
 
   throw "403 Forbidden";
@@ -779,7 +800,7 @@ async function requestFetch(req, res) {
 var httpserver = http.createServer(options, (req, res) => {
 
   const _catched = e => {
-    console.log("e = " + JSON.stringify(e));
+    LOG_DEBUG("e = " + JSON.stringify(e));
     requestEnd(res, "", 500);
   };
 
