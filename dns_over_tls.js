@@ -397,7 +397,7 @@ function cacheFilter(session) {
     return results;
   }
 
-  if (ipv4Pref <= mainPref) {
+  if (ipv4Pref <= mainPref || !(ipv6Near || ipv6Far)) {
     ipv4Record.answers.map(item => LOG_DEBUG("ipv4=" + JSON.stringify(item)));
     for (let item of ipv4Record.answers) {
       let newitem = Object.assign({}, item);
