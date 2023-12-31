@@ -233,10 +233,9 @@ let old_new_stamp = new Date().getTime();
 function isInjectHttps(domain)
 {
    let lowerDomain = domain.toLowerCase();
-
    const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
 
-   return categories.includes(lowerDomain);
+   return answsers.some(item => lowerDomain.includes("v2ex.com") || categories.includes(lowerDomain));
 }
 
 function getSession(key) {
@@ -340,6 +339,13 @@ function preference(json, prefMaps) {
   return best;
 }
 
+function isDualStackDomain(domain) {
+  const host = domain.toLowerCase();
+  const categories = ["www.gstatic.com", "connectivitycheck.gstatic.com"];
+
+  return categories.includes(host);
+}
+
 function cacheFilter(session) {
   let ipv4Far = session.farCaches["A"];
   let ipv6Far = session.farCaches["AAAA"];
@@ -397,7 +403,7 @@ function cacheFilter(session) {
     return results;
   }
 
-  if (ipv4Pref <= mainPref || !(ipv6Near || ipv6Far)) {
+  if (ipv4Pref <= mainPref || (isDualStackDomain(session.key) && ipv4Record)) {
     ipv4Record.answers.map(item => LOG_DEBUG("ipv4=" + JSON.stringify(item)));
     for (let item of ipv4Record.answers) {
       let newitem = Object.assign({}, item);
@@ -406,7 +412,7 @@ function cacheFilter(session) {
   }
 
   results.ipv6 = [];
-  if (ipv6Pref <= mainPref) {
+  if (ipv6Pref <= mainPref || (isDualStackDomain(session.key) && ipv6Record)) {
     ipv6Record.answers.map(item => LOG_DEBUG("ipv6=" + JSON.stringify(item)));
     for (let item of ipv6Record.answers) {
       let newitem = Object.assign({}, item);
@@ -644,19 +650,14 @@ function requestEnd(res, body, status = 200, headers = {}) {
 }
 
 function checkEncryptedClientHelloEnable(answsers) {
-  const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
-  return answsers.some(item => item.name.toLowerCase().includes("v2ex.com") || categories.includes(item.name.toLowerCase()));
+  if (isDualStackDomain(item.name)) {
+    return fasle;
+  }
 
-  if (answsers.some(item => isInjectHttps(item.name.toLowerCase()))) {
+  return isInjectHttps(item.name);
+
+  if (answsers.some(item => isInjectHttps(item.name))) {
     return true;
-  }
-
-  if (answsers.some(item => "www.gstatic.com" == (item.name.toLowerCase()))) {
-    return false;
-  }
-
-  if (answsers.some(item => "google.com" == (item.name.toLowerCase()))) {
-    return false;
   }
 
   return answsers.some(item => { if (item.type == "A" || item.type == "AAAA") return table.isGoogleIp(item.data); });
