@@ -178,7 +178,7 @@ function dnsSendQuery(session, client, message) {
           oil_out();
           const oil_timeout = setTimeout(oil_out, 300);
         }
-      } else if (rinfo.address == FAR_SERVER && !fake_answered) {
+      } else if (rinfo.address == FAR_SERVER && !far_answered) {
         session.farCaches[msg.questions[0].type] = msg;
         far_answered = true;
       }
@@ -269,7 +269,7 @@ function getSession(key) {
     let fakeResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
     fakeResponse.questions[0].name = key;
     session.nearCaches['A'] = fakeResponse;
-    fakeResponse.answers = [{"name":domain,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
+    fakeResponse.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
 
     let emptyResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
     emptyResponse.questions[0].name = key;
@@ -315,7 +315,13 @@ function dnsFetchQuery(fragment) {
     }
   }
 
-  dnsDispatchQuery(session, query).then(callback, session.reject);
+  const reject_wraper = v => {
+    delete session.types[qtype]
+    session.reject();
+  }
+
+  dnsDispatchQuery(session, query).then(callback, reject_wraper);
+
   return session.promise;
 }
 
@@ -589,19 +595,31 @@ async function streamHandler(socket) {
 
   const flush_pendings = (session, one) => {
     one.session = session
-    one.state = "DONE"
+    one.state   = "DONE"
+    one.aborted = false
 
     while (pendings.length > 0 && pendings[0].state == "DONE") {
       let two = pendings.shift()
-      backcall(two.session, two.query)
+      two.aborted || backcall(two.session, two.query)
+    }
+  }
+
+  const query_exception = one => {
+    LOG_ERROR("TODO:XXX failure " + JSON.stringify(one.query))
+    one.state   = "DONE"
+    one.aborted = true
+
+    while (pendings.length > 0 && pendings[0].state == "DONE") {
+      let two = pendings.shift()
+      two.aborted || backcall(two.session, two.query)
     }
   }
 
   for await (const [promise, query] of generator) {
-    const one = {query: query, state: "PENDING"}
+    const one = {query: query, state: "PENDING", aborted: false}
     pendings.push(one)
     preNat64Load(query);
-    promise.then(session => flush_pendings(session, one))
+    promise.then(session => flush_pendings(session, one), v => query_exception(one))
   }
 }
 
