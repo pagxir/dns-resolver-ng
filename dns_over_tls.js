@@ -142,6 +142,8 @@ function dnsSendQuery(session, client, message) {
   let far_answered = false;
   let fake_answered = false, fake_request = false;
 
+  client.timer = null;
+
   const onMessage = function(resolv) {
     return (segment, rinfo) => {
       let msg = dnsp.decode(segment);
@@ -177,6 +179,7 @@ function dnsSendQuery(session, client, message) {
 
           oil_out();
           const oil_timeout = setTimeout(oil_out, 300);
+          client.reset();
         }
       } else if (rinfo.address == FAR_SERVER && !far_answered) {
         session.farCaches[msg.questions[0].type] = msg;
@@ -211,7 +214,11 @@ function dnsSendQuery(session, client, message) {
   const cb = (resolv, reject) => {
     client.on('error', reject);
     client.on('message', onMessage(resolv));
-    const timer = setTimeout(reject, 3300);
+    client.reset = v => {
+        if (client.timer) clearTimeout(client.timer);
+        client.timer = setTimeout(reject, 3300);
+    }
+    client.reset();
   };
 
   return new Promise(cb);
@@ -455,6 +462,7 @@ async function* handleRequest(socket) {
   let timer = setInterval(onTimeout, 15000);
 
   LOG_DEBUG('FROM ' + socket.remoteAddress + " port=" + socket.remotePort);
+try {
   for await (const data of socket) {
     total += data.length;
     buffers.push(data);
@@ -501,6 +509,9 @@ async function* handleRequest(socket) {
       ended = false;
     }
   }
+} catch (e) {
+  LOG_ERROR(`read exception ${e}`);
+}
 
   LOG_DEBUG("session ended");
   if (!ended) socket.end();
