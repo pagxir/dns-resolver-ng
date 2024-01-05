@@ -242,7 +242,7 @@ function isInjectHttps(domain)
    let lowerDomain = domain.toLowerCase();
    const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
 
-   return answsers.some(item => lowerDomain.includes("v2ex.com") || categories.includes(lowerDomain));
+   returnlowerDomain.includes("v2ex.com") || categories.includes(lowerDomain);
 }
 
 function getSession(key) {
@@ -679,8 +679,8 @@ function requestEnd(res, body, status = 200, headers = {}) {
 }
 
 function checkEncryptedClientHelloEnable(answsers) {
-  if (isDualStackDomain(item.name)) {
-    return fasle;
+  if (answsers.some(item => isDualStackDomain(item.name))) {
+    return false;
   }
 
   return isInjectHttps(item.name);
