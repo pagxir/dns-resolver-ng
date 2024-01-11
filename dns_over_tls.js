@@ -242,7 +242,7 @@ function isInjectHttps(domain)
    let lowerDomain = domain.toLowerCase();
    const categories = ["www.v2ex.com", "cdn.v2ex.com", "www.quora.com"];
 
-   returnlowerDomain.includes("v2ex.com") || categories.includes(lowerDomain);
+   return lowerDomain.includes("v2ex.com") || categories.includes(lowerDomain);
 }
 
 function getSession(key) {
@@ -273,17 +273,20 @@ function getSession(key) {
   SESSION[key] = session;
 
   if (key == "mtalk.google.com") {
-    let fakeResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    fakeResponse.questions[0].name = key;
-    session.nearCaches['A'] = fakeResponse;
-    fakeResponse.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
+    let fake4Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    fake4Response.questions[0].name = key;
+    fake4Response.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
 
-    let emptyResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    emptyResponse.questions[0].name = key;
+    session.nearCaches['A'] = fake4Response;
+    session.farCaches['A'] = fake4Response;
 
-    session.nearCaches['AAAA'] = emptyResponse;
-    session.farCaches['A'] = emptyResponse;
-    session.farCaches['AAAA'] = emptyResponse;
+    let fake6Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    fake6Response.questions[0].name = key;
+    fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c06::bc"}];
+    // fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c00::bc"}];
+
+    session.nearCaches['AAAA'] = fake6Response;
+    session.farCaches['AAAA'] = fake6Response;
 
     session.types['AAAA'] =  "DONE";
     session.types['A'] =  "DONE";
@@ -823,11 +826,12 @@ async function requestFetch(req, res) {
         if (checkEncryptedClientHelloEnable(results.ipv4) || checkEncryptedClientHelloEnable(results.ipv6)) {
           let facingQuery = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
           facingQuery.questions[0].name = FACING_SERVER;
+          facingQuery.questions[0].type = "AAAA";
           facingSession = await dnsFetchQuery(dnsp.encode(facingQuery));
 
           results = cacheFilter(facingSession);
           query.answers = results.ipv6.map(filter_facing_cb);
-          if (query.answers.some(item => item.type == "A")) query.answers = [];
+          // if (query.answers.some(item => item.type == "A")) query.answers = [];
           query.answers.map(item => LOG_DEBUG("return6=" + JSON.stringify(item)));
         }
 
