@@ -137,6 +137,13 @@ function getDetectStatus(message) {
   return "Chaos";
 }
 
+function doAutoRetry(callback) {
+    callback();
+    setTimeout(callback, 360);
+    setTimeout(callback, 1360);
+    return;
+}
+
 function dnsSendQuery(session, client, message) {
   let near_answered = false;
   let far_answered = false;
@@ -177,8 +184,7 @@ function dnsSendQuery(session, client, message) {
           const oil_msg = dnsp.encode(detectMessage);
           let oil_out = v => fake_answered || client.send(oil_msg, FAR_PORT, FAR_SERVER, (err) => {  });
 
-          oil_out();
-          const oil_timeout = setTimeout(oil_out, 300);
+          doAutoRetry(oil_out);
           client.reset();
         }
       } else if (rinfo.address == FAR_SERVER && !far_answered) {
@@ -205,18 +211,15 @@ function dnsSendQuery(session, client, message) {
   const near_msg = dnsp.encode(msg);
   let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
 
-  near_out();
-  const near_timeout = setTimeout(near_out, 300);
-
-  far_out();
-  const far_timeout = setTimeout(far_out, 300);
+  doAutoRetry(near_out);
+  doAutoRetry(far_out);
 
   const cb = (resolv, reject) => {
     client.on('error', reject);
     client.on('message', onMessage(resolv));
-    client.reset = v => {
-        if (client.timer) clearTimeout(client.timer);
-        client.timer = setTimeout(reject, 3300);
+    client.reset = function () {
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = setTimeout(reject, 3300);
     }
     client.reset();
   };
@@ -266,7 +269,7 @@ function getSession(key) {
 
   const stamp = new Date().getTime();
 
-  if (old_new_stamp + 5000 < stamp) {
+  if (old_new_stamp + 15000 < stamp) {
     if (SESSION === OLD_SESSION) {
       SESSION = NEW_SESSION = {};
       old_new_stamp = stamp;
@@ -532,6 +535,7 @@ try {
       const query = dnsp.decode(fragment);
       if (query.questions[0].type == 'AAAA') {
         const promise = dnsFetchQuery(fragment);
+        preNat64Load(query).catch(v => {});
         yield [promise, query];
       } else if (query.questions[0].type == 'A') {
         const promise = dnsFetchQuery(fragment);
@@ -671,7 +675,7 @@ function preNat64Load(query) {
     }]
   }
 
-  return dnsFetchQuery(dnsp.encode(query64), true);
+  return dnsFetchQuery(dnsp.encode(query64), false);
 }
 
 async function streamHandler(socket) {
@@ -784,12 +788,12 @@ const GOOGLE_NAME_SERVER = "::ffff:216.239.34.10";
 
 function isGoogleDomain(fqdn, answsers)
 {
-    if (!answsers.some(item => { if (item.type == "A" || item.type == "AAAA") return table.isGoogleIp(item.data); })) {
-	return Promise.resolve(false);
+    if (isDualStackDomain(fqdn) || !answsers.some(item => { if (item.type == "A" || item.type == "AAAA") return table.isGoogleIp(item.data); })) {
+        return Promise.resolve(false);
     }
 
     if (cacheGoogleDomains[fqdn]) {
-	return cacheGoogleDomains[fqdn];
+        return cacheGoogleDomains[fqdn];
     }
 
     const client = dgram.createSocket('udp6');
@@ -801,21 +805,20 @@ function isGoogleDomain(fqdn, answsers)
     const google_query_msg = dnsp.encode(detectMessage);
     let google_out = v => google_answered || client.send(google_query_msg, GOOGLE_PORT, GOOGLE_NAME_SERVER, (err) => { LOG_DEBUG(` far send: ${err}`); });
 
-    google_out();
-    const google_timeout = setTimeout(google_out, 300);
+    doAutoRetry(google_out);
 
     const onMessage = function(resolv) {
-	return (segment, rinfo) => {
-	    let msg = dnsp.decode(segment);
-	    LOG_DEBUG("isGoogle " + msg.rcode);
-	    google_answered = true;
-	    resolv(msg.rcode != "REFUSED");
-	}
+        return (segment, rinfo) => {
+            let msg = dnsp.decode(segment);
+            LOG_DEBUG("isGoogle " + msg.rcode);
+            google_answered = true;
+            resolv(msg.rcode != "REFUSED");
+        }
     }
 
     const testcb = (resolv, reject) => {
-	client.on('error', reject);
-	client.on('message', onMessage(resolv));
+        client.on('error', reject);
+        client.on('message', onMessage(resolv));
         setTimeout(reject, 3300);
     }
 
@@ -827,278 +830,278 @@ function isGoogleDomain(fqdn, answsers)
 }
 
 async function requestFetch(req, res) {
-  const path = req.url;
+	const path = req.url;
 
-  var dns_cb = b => {
-    res.statusCode = 200;
+	var dns_cb = b => {
+		res.statusCode = 200;
 
-    res.setHeader("Server", "cloudflare");
-    res.setHeader("Date", new Date());
-    res.setHeader("Content-Type", "application/dns-message");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Content-Length", b.length);
+		res.setHeader("Server", "cloudflare");
+		res.setHeader("Date", new Date());
+		res.setHeader("Content-Type", "application/dns-message");
+		res.setHeader("Connection", "keep-alive");
+		res.setHeader("Access-Control-Allow-Origin", "*");
+		res.setHeader("Content-Length", b.length);
 
-    res.end(b);
-  };
+		res.end(b);
+	};
 
-  if (path.startsWith("/dns-query") && req.method === "GET") {
-    LOG_DEBUG("path=" + path);
-    if (path.includes("?")) {
-      const pairs = querystring.parse(path.split("?")[1]);
-      console.log("dns=" + pairs.dns);
-      const fragment = Buffer.from(pairs.dns, 'base64');
-      const query = dnsp.decode(fragment);
-      const qtype = query.questions[0].type;
-      let results = null, session = {nearCaches: {}, farCaches: {}};
+	if (path.startsWith("/dns-query") && req.method === "GET") {
+		LOG_DEBUG("path=" + path);
+		if (path.includes("?")) {
+			const pairs = querystring.parse(path.split("?")[1]);
+			console.log("dns=" + pairs.dns);
+			const fragment = Buffer.from(pairs.dns, 'base64');
+			const query = dnsp.decode(fragment);
+			const qtype = query.questions[0].type;
+			let results = null, session = {nearCaches: {}, farCaches: {}};
 
-      LOG_DEBUG("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
+			LOG_DEBUG("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
 
-      switch(qtype) {
-        case 'AAAA':
-          session = await dnsFetchQuery(fragment);
-          results = cacheFilter(session);
+			switch(qtype) {
+				case 'AAAA':
+					session = await dnsFetchQuery(fragment);
+					results = cacheFilter(session);
 
-          query.type = "response";
-          query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+					query.type = "response";
+					query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
 
-          LOG_DEBUG("RESPONSE6: " + query.questions[0].name);
-          query.answers.map(item => LOG_DEBUG("out6=" + JSON.stringify(item)));
-          dns_cb(dnsp.encode(query));
-          break;
+					LOG_DEBUG("RESPONSE6: " + query.questions[0].name);
+					query.answers.map(item => LOG_DEBUG("out6=" + JSON.stringify(item)));
+					dns_cb(dnsp.encode(query));
+					break;
 
-        case 'A':
-          session = await dnsFetchQuery(fragment);
-          results = cacheFilter(session);
+				case 'A':
+					session = await dnsFetchQuery(fragment);
+					results = cacheFilter(session);
 
-          query.type = "response";
-          query.answers = results.ipv4;
-          query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+					query.type = "response";
+					query.answers = results.ipv4;
+					query.answers = formatAnswer(results.ipv4, query.questions[0].name);
 
-          LOG_DEBUG("RESPONSE4: " + query.questions[0].name);
-          query.answers.map(item => LOG_DEBUG("out4=" + JSON.stringify(item)));
-          dns_cb(dnsp.encode(query));
-          break;
+					LOG_DEBUG("RESPONSE4: " + query.questions[0].name);
+					query.answers.map(item => LOG_DEBUG("out4=" + JSON.stringify(item)));
+					dns_cb(dnsp.encode(query));
+					break;
 
-        default:
-          let mydomain = query.questions[0].name;
+				default:
+					let mydomain = query.questions[0].name;
 
-          if (!results || !results.farCaches)
-            results = await dnsDispatchQuery(session, query);
+					if (!results || !results.farCaches)
+						results = await dnsDispatchQuery(session, query);
 
-          query.answers = results.farCaches[qtype].answers;
-          query.type = "response";
+					query.answers = results.farCaches[qtype].answers;
+					query.type = "response";
 
-          LOG_DEBUG("RESPONSE: " + query.questions[0].name);
-          query.answers.map(item => LOG_DEBUG("return=" + JSON.stringify(item)));
-          dns_cb(dnsp.encode(query));
-          break;
-      }
+					LOG_DEBUG("RESPONSE: " + query.questions[0].name);
+					query.answers.map(item => LOG_DEBUG("return=" + JSON.stringify(item)));
+					dns_cb(dnsp.encode(query));
+					break;
+			}
 
-      return;
-    }
+			return;
+		}
 
-    res.statusCode = 403;
+		res.statusCode = 403;
 
-    res.setHeader("Server", "cloudflare");
-    res.setHeader("Date", new Date());
-    res.setHeader("Content-Type", "application/dns-message");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Content-Length", 0);
+		res.setHeader("Server", "cloudflare");
+		res.setHeader("Date", new Date());
+		res.setHeader("Content-Type", "application/dns-message");
+		res.setHeader("Connection", "keep-alive");
+		res.setHeader("Access-Control-Allow-Origin", "*");
+		res.setHeader("Content-Length", 0);
 
-    res.end();
-    return;
-  }
-
-  if (path.startsWith("/dns-query") && req.method === "POST") {
-
-    const buffers = [];
-    for await (const data of req)
-      buffers.push(data);
-    const fragment = Buffer.concat(buffers);
-
-    const query = dnsp.decode(fragment);
-    const qtype = query.questions[0].type;
-    let results = null, session = {nearCaches: {}, farCaches: {}};
-
-    let filter_facing_cb = item => {
-      let newone = Object.assign({}, item);
-      if (newone.name.toLowerCase() == FACING_SERVER) {
-        newone.name = query.questions[0].name;
-        newone.ttl = 600;
-      }
-      return newone;
-    };
-
-    const fqdn = query.questions[0].name;
-    let isTLSv3 = false;
-    LOG_DEBUG("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
-
-    switch(qtype) {
-      case 'AAAA':
-	await preNat64Load(query);
-        session = await dnsFetchQuery(fragment);
-        results = cacheFilter(session);
-
-        query.type = "response";
-        query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
-
-        isTLSv3 = await isGoogleDomain(fqdn, results.ipv4);
-        if (isInjectHttps(fqdn) || isTLSv3) {
-	  results = await loadFacingResults(session, results);
-
-	  const ech_list = [];
-	  const filter_ech_ipv6 = item => {
-	      let answer = Object.assign({}, item);
-
-	      answer.name = query.questions[0].name;
-	      answer.ttl = 600;
-
-	      if (item.type == 'AAAA') {
-		  answer.data = item.data;
-		  ech_list.push(answer);
-	      } else if (item.type == 'A') {
-		  answer.data = NAT64_PREFIX + item.data;
-		  answer.type = "AAAA";
-		  ech_list.push(answer);
-	      }
-	  }
-
-	  if (session.facingResult == "DONE") {
-	    session.allows['A'] = true;
-	    results = cacheFilter(session);
-	    // query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
-	    results.ipv6.forEach(filter_ech_ipv6);
-            query.answers = ech_list;
-	  }
-
-	  /*
-	  query.answers = results.ipv6.map(filter_facing_cb);
-	  query.answers.map(item => LOG_DEBUG("return6=" + JSON.stringify(item)));
-	  */
-        }
-
-
-        LOG_DEBUG("RESPONSE6: " + query.questions[0].name);
-        query.answers.map(item => LOG_DEBUG("out6=" + JSON.stringify(item)));
-        dns_cb(dnsp.encode(query));
-        break;
-
-      case 'A':
-        session = await dnsFetchQuery(fragment);
-        results = cacheFilter(session);
-
-        query.type = "response";
-        query.answers = results.ipv4;
-        query.answers = formatAnswer(results.ipv4, query.questions[0].name);
-
-        isTLSv3 = await isGoogleDomain(fqdn, results.ipv4);
-        if (isInjectHttps(fqdn) || isTLSv3) {
-          results = await loadFacingResults(session, results);
-
-	  const outs = [];
-	  const cb = item => {
-	    let answer = Object.assign({}, item);
-	    answer.name = query.questions[0].name;
-	    answer.ttl = 600;
-
-	    if (item.type == "A") {
-	      answer.data = item.data;
-	      outs.push(answer);
-	    }
-	  }
-
-	  results.ipv4.forEach(cb);
-	  query.answers = outs;
-	  query.answers.map(item => LOG_DEBUG("return4=" + JSON.stringify(item)));
+		res.end();
+		return;
 	}
 
-        LOG_DEBUG("RESPONSE4: " + query.questions[0].name);
-        query.answers.map(item => LOG_DEBUG("out4=" + JSON.stringify(item)));
-        dns_cb(dnsp.encode(query));
-        break;
+	if (path.startsWith("/dns-query") && req.method === "POST") {
 
-      default:
-        let mydomain = query.questions[0].name;
+		const buffers = [];
+		for await (const data of req)
+			buffers.push(data);
+		const fragment = Buffer.concat(buffers);
 
-        if (qtype == "UNKNOWN_65") {
-	    const session64 = await preNat64Load(query);
-		results = cacheFilter(session64);
+		const query = dnsp.decode(fragment);
+		const qtype = query.questions[0].type;
+		let results = null, session = {nearCaches: {}, farCaches: {}};
 
-	    isTLSv3 = await isGoogleDomain(fqdn, results.ipv4);
-	    if (isTLSv3 || isInjectHttps(fqdn)) {
-		results = await loadFacingResults(session64, results);
-	    }
-        }
+		let filter_facing_cb = item => {
+			let newone = Object.assign({}, item);
+			if (newone.name.toLowerCase() == FACING_SERVER) {
+				newone.name = query.questions[0].name;
+				newone.ttl = 600;
+			}
+			return newone;
+		};
 
-        if (!results || !results.farCaches)
-          results = await dnsDispatchQuery(session, query);
+		const fqdn = query.questions[0].name;
+		let isTLSv3 = false;
+		LOG_DEBUG("QUERY BY TYPE: " + query.questions[0].name + " TYPE=" + query.questions[0].type);
 
-        query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
-        query.type = "response";
+		switch(qtype) {
+			case 'AAAA':
+				await preNat64Load(query);
+				session = await dnsFetchQuery(fragment);
+				results = cacheFilter(session);
 
-        let lastName = query.questions[0].name;
-        const cb = item => {
-	    if (lastName != item.name)
-		item.name = lastName;
-	    if (item.type == "CNAME")
-		lastName = item.data;
+				query.type = "response";
+				query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+
+				isTLSv3 = await isGoogleDomain(fqdn, results.ipv4);
+				if (isInjectHttps(fqdn) || isTLSv3) {
+					results = await loadFacingResults(session, results);
+
+					const ech_list = [];
+					const filter_ech_ipv6 = item => {
+						let answer = Object.assign({}, item);
+
+						answer.name = query.questions[0].name;
+						answer.ttl = 600;
+
+						if (item.type == 'AAAA') {
+							answer.data = item.data;
+							ech_list.push(answer);
+						} else if (item.type == 'A') {
+							answer.data = NAT64_PREFIX + item.data;
+							answer.type = "AAAA";
+							ech_list.push(answer);
+						}
+					}
+
+					if (session.facingResult == "DONE") {
+						session.allows['A'] = true;
+						// results = cacheFilter(session);
+						// query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+						results.ipv6.forEach(filter_ech_ipv6);
+						query.answers = ech_list;
+					}
+
+					/*
+					   query.answers = results.ipv6.map(filter_facing_cb);
+					   query.answers.map(item => LOG_DEBUG("return6=" + JSON.stringify(item)));
+					 */
+				}
+
+
+				LOG_DEBUG("RESPONSE6: " + query.questions[0].name);
+				query.answers.map(item => LOG_DEBUG("out6=" + JSON.stringify(item)));
+				dns_cb(dnsp.encode(query));
+				break;
+
+			case 'A':
+				session = await dnsFetchQuery(fragment);
+				results = cacheFilter(session);
+
+				query.type = "response";
+				query.answers = results.ipv4;
+				query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+
+				isTLSv3 = await isGoogleDomain(fqdn, results.ipv4);
+				if (isInjectHttps(fqdn) || isTLSv3) {
+					results = await loadFacingResults(session, results);
+
+					const outs = [];
+					const cb = item => {
+						let answer = Object.assign({}, item);
+						answer.name = query.questions[0].name;
+						answer.ttl = 600;
+
+						if (item.type == "A") {
+							answer.data = item.data;
+							outs.push(answer);
+						}
+					}
+
+					results.ipv4.forEach(cb);
+					query.answers = outs;
+					query.answers.map(item => LOG_DEBUG("return4=" + JSON.stringify(item)));
+				}
+
+				LOG_DEBUG("RESPONSE4: " + query.questions[0].name);
+				query.answers.map(item => LOG_DEBUG("out4=" + JSON.stringify(item)));
+				dns_cb(dnsp.encode(query));
+				break;
+
+			default:
+				let mydomain = query.questions[0].name;
+
+				if (qtype == "UNKNOWN_65") {
+					const session64 = await preNat64Load(query);
+					results = cacheFilter(session64);
+
+					isTLSv3 = await isGoogleDomain(fqdn, results.ipv4);
+					if (isTLSv3 || isInjectHttps(fqdn)) {
+						results = await loadFacingResults(session64, results);
+					}
+				}
+
+				if (!results || !results.farCaches)
+					results = await dnsDispatchQuery(session, query);
+
+				query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
+				query.type = "response";
+
+				let lastName = query.questions[0].name;
+				const cb = item => {
+					if (lastName != item.name)
+						item.name = lastName;
+					if (item.type == "CNAME")
+						lastName = item.data;
+				}
+				query.answers.forEach(cb);
+
+				LOG_DEBUG("RESPONSE: " + query.questions[0].name);
+				query.answers.map(item => LOG_DEBUG("return=" + JSON.stringify(item)));
+				dns_cb(dnsp.encode(query));
+				break;
+		}
+
+		return;
 	}
-        query.answers.forEach(cb);
 
-        LOG_DEBUG("RESPONSE: " + query.questions[0].name);
-        query.answers.map(item => LOG_DEBUG("return=" + JSON.stringify(item)));
-        dns_cb(dnsp.encode(query));
-        break;
-    }
+	if (path.startsWith("/proxy_config/")) {
+		try {
+			// var PROXY_COMMAND = "SOCKS 127.0.0.1:8888";
+			var PROXY_COMMAND = "SOCKS 103.45.162.65:18881"
+				var args = path.split("/");
+			args.find(item => { if(item.startsWith("SOCKS")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
+			args.find(item => { if(item.startsWith("PROXY")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
+			args.find(item => { if(item.startsWith("HTTPS")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
+			args.find(item => { if(item.startsWith("HTTP")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
+			var data = fs.readFileSync("proxy.pac", 'utf8').replace("PROXY 127.0.0.1:8080", PROXY_COMMAND);
+			var mimeType = "text/javascript";
+			res.setHeader("Content-Type", mimeType);
+			res.statusCode = 200;
+			res.end(data); 
+		} catch(e) {
+			LOG_ERROR('XError:', e.stack);
+			res.end();
+		}
+		return;
+	}
 
-    return;
-  }
+	LOG_DEBUG("path=" + path + " method=" + req.method);
+	for (const [k, v] of Object.entries(req.headers)) {
+		LOG_DEBUG("" + k + "=" + v);
+	}
 
-  if (path.startsWith("/proxy_config/")) {
-    try {
-      // var PROXY_COMMAND = "SOCKS 127.0.0.1:8888";
-      var PROXY_COMMAND = "SOCKS 103.45.162.65:18881"
-      var args = path.split("/");
-      args.find(item => { if(item.startsWith("SOCKS")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
-      args.find(item => { if(item.startsWith("PROXY")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
-      args.find(item => { if(item.startsWith("HTTPS")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
-      args.find(item => { if(item.startsWith("HTTP")) { PROXY_COMMAND=item.replace("@", " "); return true; } });
-      var data = fs.readFileSync("proxy.pac", 'utf8').replace("PROXY 127.0.0.1:8080", PROXY_COMMAND);
-      var mimeType = "text/javascript";
-      res.setHeader("Content-Type", mimeType);
-      res.statusCode = 200;
-      res.end(data); 
-    } catch(e) {
-      LOG_ERROR('XError:', e.stack);
-      res.end();
-    }
-    return;
-  }
+	{
+		let b = "<html/>"
+			res.statusCode = 200;
+		if (path.startsWith("/generate_204")) {
+			res.statusCode = 204;
+			b = "";
+		}
 
-  LOG_DEBUG("path=" + path + " method=" + req.method);
-  for (const [k, v] of Object.entries(req.headers)) {
-    LOG_DEBUG("" + k + "=" + v);
-  }
+		res.setHeader("Server", "cloudflare");
+		res.setHeader("Date", new Date());
+		res.setHeader("Content-Type", "text/html");
+		res.setHeader("Connection", "keep-alive");
+		res.setHeader("Access-Control-Allow-Origin", "*");
+		res.setHeader("Content-Length", b.length);
 
-  {
-    let b = "<html/>"
-    res.statusCode = 200;
-    if (path.startsWith("/generate_204")) {
-      res.statusCode = 204;
-      b = "";
-    }
-
-    res.setHeader("Server", "cloudflare");
-    res.setHeader("Date", new Date());
-    res.setHeader("Content-Type", "text/html");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Content-Length", b.length);
-
-    res.end(b);
-  }
+		res.end(b);
+	}
 }
 
 var httpserver = http.createServer(options, (req, res) => {
