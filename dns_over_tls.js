@@ -336,23 +336,20 @@ function dnsFetchQuery(fragment, preload = false) {
 
   const session = getSession(domain.toLowerCase());
 
-  if (!Object.values(session.types).includes("PENDING")) {
+  if (qtype in session.types) {
+    LOG_DEBUG("types " + qtype + " = " + session.types[qtype] + " key " + domain)
+    return session.promise;
+  } else if (!Object.values(session.types).includes("PENDING")) {
     session.promise = new Promise((resolv, reject) => {
       session.resolv = resolv;
       session.reject = reject;
     });
   }
 
-  if (qtype in session.types)
-    LOG_DEBUG("types " + qtype + " = " + session.types[qtype] + " key " + domain)
-  else
-    session.types[qtype] = "PENDING"
+  session.types[qtype] = "PENDING"
 
   if (!preload)
     session.allows[qtype] = true;
-
-  if (!Object.values(session.types).includes("PENDING"))
-    return Promise.resolve(session)
 
   const callback = v => {
     session.types[qtype] = "DONE";
@@ -363,10 +360,11 @@ function dnsFetchQuery(fragment, preload = false) {
 
   const reject_wraper = v => {
     delete session.types[qtype]
+    session.types = {};
     session.reject();
   }
 
-  dnsDispatchQuery(session, query).then(callback, reject_wraper);
+  dnsDispatchQuery(session, query).then(callback).catch(reject_wraper);
 
   return session.promise;
 }
