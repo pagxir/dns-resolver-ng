@@ -264,7 +264,10 @@ function setFakeSession(session, key)
 
   session.types['AAAA'] =  "DONE";
   session.types['A'] =  "DONE";
+
+  session.promise = Promise.resolve(session);
 }
+
 function getSession(key) {
 
   const stamp = new Date().getTime();
@@ -306,6 +309,8 @@ function getSession(key) {
 
 
   if (key == "mtalk.google.com") {
+    setFakeSession(session, key);
+
     let fake4Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
     fake4Response.questions[0].name = key;
     fake4Response.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
@@ -315,14 +320,29 @@ function getSession(key) {
 
     let fake6Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
     fake6Response.questions[0].name = key;
-    fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c06::bc"}];
-    // fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c00::bc"}];
+	fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c06::bc"}, 
+		{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c00::bc"}];
 
     session.nearCaches['AAAA'] = fake6Response;
     session.farCaches['AAAA'] = fake6Response;
+  }
 
-    session.types['AAAA'] =  "DONE";
-    session.types['A'] =  "DONE";
+  if (key == "www.gstatic.com") {
+    setFakeSession(session, key);
+
+    let fake4Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    fake4Response.questions[0].name = key;
+    fake4Response.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"203.208.40.2"}];
+
+    session.nearCaches['A'] = fake4Response;
+    session.farCaches['A'] = fake4Response;
+
+    let fake6Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    fake6Response.questions[0].name = key;
+    fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2401:3800:4002:807::1002"}, {"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c00::bc"}];
+
+    session.nearCaches['AAAA'] = fake6Response;
+    session.farCaches['AAAA'] = fake6Response;
   }
 
   return session;
