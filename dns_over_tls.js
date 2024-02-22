@@ -471,6 +471,8 @@ function cacheFilter(session) {
 
   LOG_DEBUG("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
   if (mainPref == INVALIDE_PREFERENE) {
+    LOG_DEBUG("failure ------------------ " + JSON.stringify(session));
+    session.types = {};
     return results;
   }
 
