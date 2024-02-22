@@ -194,6 +194,7 @@ function dnsSendQuery(session, client, message) {
 
       // LOG_DEBUG("slow_answer " + far_answered + " fast_answer " + near_answered);
       if (far_answered && near_answered && fake_request == fake_answered) {
+        clearTimeout(client.timer);
         resolv(session);
       }
     }
@@ -272,7 +273,7 @@ function getSession(key) {
 
   const stamp = new Date().getTime();
 
-  if (old_new_stamp + 15000 < stamp) {
+  if (old_new_stamp + 540000 < stamp) {
     if (SESSION === OLD_SESSION) {
       SESSION = NEW_SESSION = {};
       old_new_stamp = stamp;
@@ -699,6 +700,12 @@ function preNat64Load(query) {
 async function streamHandler(socket) {
   const generator = handleRequest(socket);
 
+  const emptySend = (query) => {
+      query.type = "response";
+      query.rcode = dnsp.SERVFAIL;
+      sendSegment(socket, dnsp.encode(query));
+  };
+
   const backcall = (session, query) => {
     const qtype   = query.questions[0].type;
     if (qtype == 'AAAA') {
@@ -735,6 +742,7 @@ async function streamHandler(socket) {
     while (pendings.length > 0 && pendings[0].state == "DONE") {
       let two = pendings.shift()
       two.aborted || backcall(two.session, two.query)
+      two.aborted && emptySend(two.query)
     }
   }
 
@@ -746,6 +754,7 @@ async function streamHandler(socket) {
     while (pendings.length > 0 && pendings[0].state == "DONE") {
       let two = pendings.shift()
       two.aborted || backcall(two.session, two.query)
+      two.aborted && emptySend(two.query)
     }
   }
 
