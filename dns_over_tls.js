@@ -144,6 +144,10 @@ function doAutoRetry(callback) {
     return;
 }
 
+function getRandomInt(max) {
+  return Math.floor(Math.random() * max);
+}
+
 function dnsSendQuery(session, client, message) {
   let near_answered = false;
   let far_answered = false;
@@ -179,6 +183,7 @@ function dnsSendQuery(session, client, message) {
           LOG_DEBUG("detect start " + qname);
           const detectMessage = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
           detectMessage.questions[0].name = qname + DETECT_DOMAIN_SUFFIEX;
+          detectMessage.id = getRandomInt(65535);
           fake_request = true;
 
           const oil_msg = dnsp.encode(detectMessage);
@@ -201,6 +206,7 @@ function dnsSendQuery(session, client, message) {
   };
 
   let msg = dnsNomalize(message);
+  msg.id = getRandomInt(65535);
   const type = msg.questions[0].type;
   const qname = msg.questions[0].name;
 
@@ -209,6 +215,7 @@ function dnsSendQuery(session, client, message) {
   let far_out = v => far_answered || client.send(far_msg, FAR_PORT, FAR_SERVER, (err) => { LOG_DEBUG(` far send: ${qname} ${type} ${err}`); });
 
   dnsSetClientSubnet(msg, "117.144.103.197");
+  msg.id = getRandomInt(65535);
   const near_msg = dnsp.encode(msg);
   let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
 
@@ -827,6 +834,7 @@ function isGoogleDomain(fqdn, answsers)
 
     const client = dgram.createSocket('udp6');
     const detectMessage = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
+    detectMessage.id = getRandomInt(65535);
     detectMessage.questions[0].name = fqdn;
 
     let google_answered = false;
