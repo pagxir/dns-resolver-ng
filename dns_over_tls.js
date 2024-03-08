@@ -88,22 +88,23 @@ function dnsNomalize(data) {
 }
 
 const FAR_PORT = 53;
-const FAR_SERVER = "::ffff:8.8.8.8";
+const FAR_SERVER = "::ffff:127.0.0.53";
 
 const NEAR_PORT = 53;
 const NEAR_SERVER = "::ffff:223.5.5.5";
 // const NEAR_SERVER = "::ffff:119.29.29.29";
 
-const IPV4_NEAR_PREFERENE = 1;
-const IPV4_FAR_PREFERENE  = 3;
+const IPV4_NEAR_PRECEDENCE = 1;
+const IPV4_FAR_PRECEDENCE  = 3;
 
-const IPV6_NEAR_PREFERENE = 2;
-const IPV6_FAR_PREFERENE  = 3;
+const IPV6_NEAR_PRECEDENCE = 2;
+const IPV6_FAR_PRECEDENCE  = 3;
 
-const NAT64_NEAR_PREFERENE = 8;
-const NAT64_FAR_PREFERENE  = 3;
+const NAT64_NEAR_PRECEDENCE = 8;
+const NAT64_FAR_PRECEDENCE  = 3;
 
-const INVALIDE_PREFERENE   = 100;
+const FAILURE_PRECEDENCE   = 99;
+const INVALIDE_PRECEDENCE   = 100;
 const DETECT_DOMAIN_SUFFIEX = ".oil.cootail.com";
 
 const DETECT_DOMAIN_JSON = {
@@ -398,7 +399,7 @@ function dnsFetchQuery(fragment, preload = false) {
 }
 
 function preference(json, prefMaps) {
-  let pref = INVALIDE_PREFERENE, best = INVALIDE_PREFERENE;
+  let pref = INVALIDE_PRECEDENCE, best = INVALIDE_PRECEDENCE;
 
   if (json && json.answers) {
     for (item of json.answers) {
@@ -432,42 +433,42 @@ function cacheFilter(session) {
   let ipv6Near = session.nearCaches["AAAA"];
 
   let ipv4Record = null, ipv6Record = null;
-  let ipv4Pref = INVALIDE_PREFERENE, ipv6Pref = INVALIDE_PREFERENE, mainPref = INVALIDE_PREFERENE;
+  let ipv4Pref = INVALIDE_PRECEDENCE, ipv6Pref = INVALIDE_PRECEDENCE, mainPref = INVALIDE_PRECEDENCE;
   const isNearGood = !DETECHCACHE[session.key] || DETECHCACHE[session.key] != "cachedBad";
 
-  let pref = preference(ipv6Near, [IPV6_NEAR_PREFERENE, INVALIDE_PREFERENE]);
+  let pref = preference(ipv6Near, [IPV6_NEAR_PRECEDENCE, FAILURE_PRECEDENCE]);
   if (pref <= ipv6Pref && isNearGood) {
     ipv6Pref = pref;
     ipv6Record = ipv6Near;
   }
   // ipv6Near.answers.map(i => LOG_DEBUG("near " + JSON.stringify(i)));
 
-  pref = preference(ipv6Far, [INVALIDE_PREFERENE, IPV6_FAR_PREFERENE]);
+  pref = preference(ipv6Far, [FAILURE_PRECEDENCE, IPV6_FAR_PRECEDENCE]);
   if (pref <= ipv6Pref) {
     ipv6Pref = pref;
     ipv6Record = ipv6Far;
   }
   // ipv6Far.answers.map(i => LOG_DEBUG("far_ " + JSON.stringify(i)));
 
-  pref = preference(ipv4Near, [IPV4_NEAR_PREFERENE, INVALIDE_PREFERENE]);
+  pref = preference(ipv4Near, [IPV4_NEAR_PRECEDENCE, FAILURE_PRECEDENCE]);
   if (pref <= ipv4Pref && isNearGood) {
     ipv4Pref = pref;
     ipv4Record = ipv4Near;
   }
 
-  pref = preference(ipv4Far, [INVALIDE_PREFERENE, IPV4_FAR_PREFERENE]);
+  pref = preference(ipv4Far, [FAILURE_PRECEDENCE, IPV4_FAR_PRECEDENCE]);
   if (pref <= ipv4Pref) {
     ipv4Pref = pref;
     ipv4Record = ipv4Far;
   }
 
-  pref = preference(ipv4Far, [INVALIDE_PREFERENE, NAT64_FAR_PREFERENE]);
+  pref = preference(ipv4Far, [INVALIDE_PRECEDENCE, NAT64_FAR_PRECEDENCE]);
   if (pref <= ipv6Pref && session.allows['A']) {
     ipv6Pref = pref;
     ipv6Record = ipv4Far;
   }
 
-  pref = preference(ipv4Near, [NAT64_NEAR_PREFERENE, INVALIDE_PREFERENE]);
+  pref = preference(ipv4Near, [NAT64_NEAR_PRECEDENCE, INVALIDE_PRECEDENCE]);
   if (pref <= ipv6Pref && isNearGood && session.allows['A']) {
     ipv6Pref = pref;
     ipv6Record = ipv4Near;
@@ -477,7 +478,7 @@ function cacheFilter(session) {
   mainPref = ipv4Pref > ipv6Pref? ipv6Pref: ipv4Pref;
 
   LOG_DEBUG("key = " + session.key + " ipv4pref=" + ipv4Pref + " ipv6pref=" + ipv6Pref + " mainpref=" + mainPref);
-  if (mainPref == INVALIDE_PREFERENE) {
+  if (mainPref == INVALIDE_PRECEDENCE) {
     LOG_DEBUG("failure ------------------ " + JSON.stringify(session));
     session.types = {};
     return results;
@@ -806,7 +807,7 @@ const tcpserver = net.createServer(options, async (socket) => {
   streamHandler(socket).catch(_catched);
 });
 
-tcpserver.listen(8853, () => {
+tcpserver.listen(53, () => {
   LOG_DEBUG('server bound');
 });
 
@@ -1151,7 +1152,62 @@ var httpserver = http.createServer(options, (req, res) => {
   requestFetch(req, res).catch(_catched);
 });
 
-httpserver.listen(80);
+httpserver.listen(18000);
+
+const udpserver = dgram.createSocket('udp4');
+
+function onFailure(e) {
+	LOG_ERROR("UDP SERVER error = " + e);
+}
+
+async function onDnsQuery(segment, rinfo) {
+	LOG_DEBUG("UDP SERVER rinfo " + rinfo.address);
+
+	const query = dnsp.decode(segment);
+	const qtype = query.questions[0].type;
+	if (query.questions[0].type == 'AAAA') {
+		const promise = dnsFetchQuery(segment);
+		preNat64Load(query).catch(v => {});
+
+		let session = await promise;
+		const results = cacheFilter(session);
+		query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+		query.type = "response";
+
+		let out_segment = dnsp.encode(query);
+		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
+
+	} else if (query.questions[0].type == 'A') {
+		const promise = dnsFetchQuery(segment);
+
+		let session = await promise;
+		const results = cacheFilter(session);
+		query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+		query.type = "response";
+
+		let out_segment = dnsp.encode(query);
+		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
+
+	} else {
+		let  session = {nearCaches: {}, farCaches: {}, key: query.questions[0].name.toLowerCase(), allows: {}, types: {}};
+		const promise = dnsDispatchQuery(session, query);
+
+		session = await promise;
+		query.answers = session.farCaches[qtype].answers;
+		query.type = "response";
+
+		let out_segment = dnsp.encode(query);
+		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
+	}
+}
+
+udpserver.on('error', onFailure);
+udpserver.on('message', onDnsQuery);
+udpserver.bind( {
+  address: '127.9.9.9',
+  port: 53,
+  exclusive: true,
+});
 
 assert(1 == table.lookup4("172.217.163.36"));
 assert(1 == table.lookup6("2404:6800:4003:c02::6a"));
