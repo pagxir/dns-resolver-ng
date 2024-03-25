@@ -264,12 +264,12 @@ function setFakeSession(session, key)
     let fakeResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
     fakeResponse.questions[0].name = key;
     fakeResponse.questions[0].type = type;
+    fakeResponse.answers = [];
+    return fakeResponse;
   };
 
-  session.nearCaches['AAAA'] = emptyResponse(key, 'AAAA');
-  session.farCaches['AAAA'] = emptyResponse(key, 'AAAA');
-  session.nearCaches['A'] = emptyResponse(key, 'A');
-  session.farCaches['A'] = emptyResponse(key, 'A');
+  session.nearCaches['AAAA'] = session.farCaches['AAAA'] = emptyResponse(key, 'AAAA');
+  session.nearCaches['A'] = session.farCaches['A'] = emptyResponse(key, 'A');
 
   session.types['AAAA'] =  "DONE";
   session.types['A'] =  "DONE";
@@ -301,58 +301,49 @@ function getSession(key) {
     return NEW_SESSION[key];
   }
 
-  let session = {nearCaches: {}, farCaches: {}, types: {}, key: key, allows: {}};
+  let session = {nearCaches: {}, farCaches: {}, types: {}, key: key, allows: {}, disableNat64: false};
   SESSION[key] = session;
-  if (key == "ipv4only.arpa") {
-    setFakeSession(session, key);
 
-    let fakeResponse = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    fakeResponse.questions[0].name = key;
-    session.nearCaches['A'] = fakeResponse;
-    fakeResponse.questions[0].type = "AAAA";
-    fakeResponse.answers = [{"name":key,"type":"AAAA","ttl":600,"class":"IN","flush":false,"data":"2002:1769:c6bd:ffff::"}];
+  const preset_records = [
+    {name: "ipv4only.arpa", type: "AAAA", data: "2002:1769:c6bd:ffff::"},
+    // {name: "www.google.com", type: "A", data: "8.8.8.80"}
 
-    session.nearCaches['AAAA'] = fakeResponse;
-    session.farCaches['AAAA'] = fakeResponse;
-  }
+    {name: "play.googleapis.com", type: "A", data: "74.125.130.95"},
+    {name: "play.googleapis.com", type: "AAAA", data: "64:ff9b::74.125.130.95"},
 
+    {name: "mtalk.google.com", type: "A", data: "110.42.145.164"},
+    {name: "mtalk.google.com", type: "AAAA", data: "2404:6800:4008:c06::bc"},
+    {name: "mtalk.google.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
 
-  if (key == "mtalk.google.com") {
-    setFakeSession(session, key);
+    {name: "www.gstatic.com", type: "A", data: "203.208.40.2"},
+    {name: "www.gstatic.com", type: "AAAA", data: "2401:3800:4002:807::1002"},
+    {name: "www.gstatic.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
+  ];
 
-    let fake4Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    fake4Response.questions[0].name = key;
-    fake4Response.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"74.125.137.188"}];
+  let initialize = false;
+  const preset_setup = item => { 
+	if (key != item.name) {
+	  return;
+	}
 
-    session.nearCaches['A'] = fake4Response;
-    session.farCaches['A'] = fake4Response;
+	if (!initialize) {
+	  setFakeSession(session, key);
+	  initialize = true;
+	}
 
-    let fake6Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    fake6Response.questions[0].name = key;
-	fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c06::bc"}, 
-		{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c00::bc"}];
+	switch (item.type) {
+	  case 'A':
+		session.nearCaches['A'].answers.push({"name":key,"type":item.type,"ttl":300,"class":"IN", "data": item.data});
+		break;
 
-    session.nearCaches['AAAA'] = fake6Response;
-    session.farCaches['AAAA'] = fake6Response;
-  }
+	  case 'AAAA':
+		session.disableNat64 = true;
+		session.nearCaches['AAAA'].answers.push({"name":key,"type":item.type,"ttl":300,"class":"IN", "data": item.data});
+		break;
+	}
+  };
 
-  if (key == "www.gstatic.com") {
-    setFakeSession(session, key);
-
-    let fake4Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    fake4Response.questions[0].name = key;
-    fake4Response.answers = [{"name":key,"type":"A","ttl":27,"class":"IN","flush":false,"data":"203.208.40.2"}];
-
-    session.nearCaches['A'] = fake4Response;
-    session.farCaches['A'] = fake4Response;
-
-    let fake6Response = JSON.parse(JSON.stringify(DETECT_DOMAIN_JSON));
-    fake6Response.questions[0].name = key;
-    fake6Response.answers = [{"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2401:3800:4002:807::1002"}, {"name":key,"type":"AAAA","ttl":27,"class":"IN","flush":false,"data":"2404:6800:4008:c00::bc"}];
-
-    session.nearCaches['AAAA'] = fake6Response;
-    session.farCaches['AAAA'] = fake6Response;
-  }
+  preset_records.forEach(preset_setup);
 
   return session;
 }
@@ -436,6 +427,10 @@ function cacheFilter(session) {
   let ipv4Pref = INVALIDE_PRECEDENCE, ipv6Pref = INVALIDE_PRECEDENCE, mainPref = INVALIDE_PRECEDENCE;
   const isNearGood = !DETECHCACHE[session.key] || DETECHCACHE[session.key] != "cachedBad";
 
+  let enableNat64 = !session.disableNat64;
+  if (!isNearGood && !isDualStackDomain(session.key)) enableNat64 = true;
+  if (isNearGood && isDualStackDomain(session.key)) enableNat64 = false;
+
   let pref = preference(ipv6Near, [IPV6_NEAR_PRECEDENCE, FAILURE_PRECEDENCE]);
   if (pref <= ipv6Pref && isNearGood) {
     ipv6Pref = pref;
@@ -463,13 +458,13 @@ function cacheFilter(session) {
   }
 
   pref = preference(ipv4Far, [INVALIDE_PRECEDENCE, NAT64_FAR_PRECEDENCE]);
-  if (pref <= ipv6Pref && session.allows['A']) {
+  if (pref <= ipv6Pref && enableNat64 && session.allows['A']) {
     ipv6Pref = pref;
     ipv6Record = ipv4Far;
   }
 
   pref = preference(ipv4Near, [NAT64_NEAR_PRECEDENCE, INVALIDE_PRECEDENCE]);
-  if (pref <= ipv6Pref && isNearGood && session.allows['A']) {
+  if (pref <= ipv6Pref && enableNat64 && isNearGood && session.allows['A']) {
     ipv6Pref = pref;
     ipv6Record = ipv4Near;
   }
