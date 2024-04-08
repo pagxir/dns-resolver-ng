@@ -84,6 +84,10 @@ function dnsNomalize(data) {
     data.additionals = data.additionals.map(opt_map);
   }
 
+  if (data.questions && data.questions[0].name) {
+    data.questions[0].name = data.questions[0].name.toLowerCase();
+  }
+
   return data;
 }
 
@@ -920,7 +924,7 @@ async function requestFetch(req, res) {
 					let mydomain = query.questions[0].name;
 
 					if (!results || !results.farCaches)
-						results = await dnsDispatchQuery(session, query);
+						results = await dnsDispatchQuery(session, dnsp.decode(fragment));
 
 					query.answers = results.farCaches[qtype].answers;
 					query.type = "response";
@@ -1069,7 +1073,7 @@ async function requestFetch(req, res) {
 				}
 
 				if (!results || !results.farCaches)
-					results = await dnsDispatchQuery(session, query);
+					results = await dnsDispatchQuery(session, dnsp.decode(fragment));
 
 				query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
 				query.type = "response";
@@ -1185,7 +1189,7 @@ async function onDnsQuery(segment, rinfo) {
 
 	} else {
 		let  session = {nearCaches: {}, farCaches: {}, key: query.questions[0].name.toLowerCase(), allows: {}, types: {}};
-		const promise = dnsDispatchQuery(session, query);
+		const promise = dnsDispatchQuery(session, dnsp.decode(segment));
 
 		session = await promise;
 		query.answers = session.farCaches[qtype].answers;
