@@ -92,11 +92,11 @@ function dnsNomalize(data) {
 }
 
 const FAR_PORT = 53;
-const FAR_SERVER = "::ffff:127.0.0.53";
+const FAR_SERVER = "::ffff:127.0.0.111";
 
 const NEAR_PORT = 53;
-const NEAR_SERVER = "::ffff:223.5.5.5";
-// const NEAR_SERVER = "::ffff:119.29.29.29";
+const NEAR_SERVER = "::ffff:119.29.29.29";
+const NEAR_SERVER_BACKUP = "::ffff:8.8.8.8";
 
 const IPV4_NEAR_PRECEDENCE = 1;
 const IPV4_FAR_PRECEDENCE  = 3;
@@ -180,7 +180,7 @@ function dnsSendQuery(session, client, message) {
         }
 
         fake_answered = true;
-      } else if (rinfo.address == NEAR_SERVER && !near_answered) {
+      } else if ((rinfo.address == NEAR_SERVER || rinfo.address == NEAR_SERVER_BACKUP) && !near_answered) {
         near_answered = true;
         session.nearCaches[msg.questions[0].type] = msg;
         /*"Ok":"cachedOK":"cachedBad": */
@@ -223,7 +223,9 @@ function dnsSendQuery(session, client, message) {
   msg.id = getRandomInt(65535);
   const near_msg = dnsp.encode(msg);
   let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
+  let backup_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER_BACKUP, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
 
+  doAutoRetry(backup_out);
   doAutoRetry(near_out);
   doAutoRetry(far_out);
 
@@ -308,20 +310,32 @@ function getSession(key) {
   let session = {nearCaches: {}, farCaches: {}, types: {}, key: key, allows: {}, disableNat64: false};
   SESSION[key] = session;
 
+  if (key.includes(".cootail.com") || key.includes("603030.xyz")) session.disableNat64 = true;
+
   const preset_records = [
     {name: "ipv4only.arpa", type: "AAAA", data: "2002:1769:c6bd:ffff::"},
-    // {name: "www.google.com", type: "A", data: "8.8.8.80"}
+    // stun.syncthing.net.     1704    IN      A       
+    {name: "stun.softjoys.com", type: "A", data: "139.59.84.212"},
+    {name: "stun.softjoys.com", type: "A", data: "198.211.120.59"},
+    // {name: "listen.10155.com", type: "A", data: "110.42.145.164"},
+    // {name: "www.google.com", type: "A", data: "8.8.8.80"},
 
-    {name: "play.googleapis.com", type: "A", data: "74.125.130.95"},
-    {name: "play.googleapis.com", type: "AAAA", data: "64:ff9b::74.125.130.95"},
+    {name: "www.gstatic.com", type: "A", data: "203.208.40.2"},
+    {name: "www.gstatic.com", type: "AAAA", data: "2401:3800:4002:807::1002"},
+    {name: "www.gstatic.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
+
+    {name: "www.googleapis.cn", type: "AAAA", data: "2607:f8b0:4005:814::2003"},
+    {name: "www.googleapis.cn", type: "A", data: "120.253.255.162"},
 
     {name: "mtalk.google.com", type: "A", data: "110.42.145.164"},
     {name: "mtalk.google.com", type: "AAAA", data: "2404:6800:4008:c06::bc"},
     {name: "mtalk.google.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
 
-    {name: "www.gstatic.com", type: "A", data: "203.208.40.2"},
-    {name: "www.gstatic.com", type: "AAAA", data: "2401:3800:4002:807::1002"},
-    {name: "www.gstatic.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
+    {name: "time.android.com", type: "A", data: "120.25.115.20"},
+    {name: "time.android.com", type: "A", data: "106.55.184.199"},
+
+    {name: "connectivitycheck.gstatic.com", type: "A", data: "203.208.41.98"},
+    {name: "connectivitycheck.gstatic.com", type: "AAAA", data: "2401:3800:4002:801::1002"},
   ];
 
   let initialize = false;
@@ -793,6 +807,26 @@ server.listen(853, "127.9.9.9", () => {
   LOG_DEBUG('server bound');
 });
 
+const server6 = tls.createServer(options, (socket) => {
+  LOG_DEBUG('server connected', socket.authorized ? 'authorized' : 'unauthorized');
+  const address = socket.remoteAddress;
+  socket.on("error", e => LOG_DEBUG("tls error " + e));
+  socket.on("close", e => socket.end());
+
+  const _catched = e => {
+    LOG_ERROR("e = " + e);
+    LOG_ERROR(" " + e.stack);
+  };
+
+  streamHandler(socket).catch(_catched);
+});
+
+
+server6.listen(853, "::1", () => {
+  LOG_DEBUG('server bound');
+});
+
+
 const tcpserver = net.createServer(options, async (socket) => {
   const address = socket.remoteAddress;
   socket.on("error", e => LOG_DEBUG("tcp error " + e));
@@ -1164,6 +1198,7 @@ async function onDnsQuery(segment, rinfo) {
 
 	const query = dnsp.decode(segment);
 	const qtype = query.questions[0].type;
+try {
 	if (query.questions[0].type == 'AAAA') {
 		const promise = dnsFetchQuery(segment);
 		preNat64Load(query).catch(v => {});
@@ -1198,6 +1233,9 @@ async function onDnsQuery(segment, rinfo) {
 		let out_segment = dnsp.encode(query);
 		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
 	}
+} catch (e) {
+	LOG_ERROR("UDP FAILURE" + e);
+}
 }
 
 udpserver.on('error', onFailure);
