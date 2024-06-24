@@ -91,12 +91,123 @@ function dnsNomalize(data) {
   return data;
 }
 
+const resolver_copy = {
+  Q: msg => msg,
+  R: msg => msg,
+};
+
+function reverse(str)
+{
+  return str.split("").reverse().join("");
+}
+
+function leftShift(str)
+{
+  let suffixes = str.substring(1);
+  return suffixes + str.charAt(0);
+}
+
+function rightShift(str)
+{
+  let suffixes = str.substring(0, str.length - 1);
+  return str.charAt(str.length -1) + suffixes;
+}
+
+const DOMAINS = ["net", "com", "org", "co", "edu", "gov"];
+
+function domainRewrap(host) {
+  let parts = host.split(".");
+  let last = parts.length;
+  let cc = 0;
+
+  if (last > 0 && parts[last - 1].length == 2) {
+    cc = 1;
+    last--;
+  }
+
+  if (last > 0 && (cc == 0 || DOMAINS.includes(parts[last -1]))) {
+    last--;
+    parts[last] = reverse(parts[last]);
+  }
+
+  if (last > 0) {
+    last--;
+    parts[last] = leftShift(parts[last]);
+  }
+
+  return parts.join(".");
+}
+
+function domainUnwrap(host) {
+  let parts = host.split(".");
+  let last = parts.length;
+  let cc = 0;
+
+  if (last > 0 && parts[last - 1].length == 2) {
+    cc = 1;
+    last--;
+  }
+
+  if (last > 0 && (cc == 0 || DOMAINS.includes(reverse(parts[last -1])))) {
+    last--;
+    parts[last] = reverse(parts[last]);
+  }
+
+  if (last > 0) {
+    last--;
+    parts[last] = rightShift(parts[last]);
+  }
+
+  return parts.join(".");
+}
+
+const name_encode = name => {
+  return domainRewrap(name) + ".cootail.com";
+};
+
+const name_decode = name => {
+  return domainUnwrap(name.substring(0, name.length - 12));
+};
+
+const QUERY_DOMAIN_JSON = {
+  type: 'query',
+  id: 26858,
+  flags: dnsp.RECURSION_DESIRED,
+  questions: [{
+    type: 'A',
+    name: 'google.com'
+  }]
+};
+
+const resolver_coder = {
+  Q: msg => {
+    let q = JSON.parse(JSON.stringify(QUERY_DOMAIN_JSON));
+    q.questions[0].name = name_encode(msg.questions[0].name);
+    q.questions[0].type = msg.questions[0].type;
+    q.additionals = msg.additionals;
+    q.id = msg.id;
+    return q;
+  },
+
+  R: msg => {
+    const name_origin = msg.questions[0].name;
+    const name_decoded = name_decode(name_origin);
+
+    msg.answers.map(item => { return item.name == name_origin && (item.name = name_decoded); });
+    return msg;
+  },
+};
+
 const FAR_PORT = 53;
-const FAR_SERVER = "::ffff:127.0.0.111";
+const FAR_SERVER = "64:ff9b::909:909";
+const FAR_RESOLVER = resolver_copy;
 
 const NEAR_PORT = 53;
 const NEAR_SERVER = "::ffff:119.29.29.29";
+const NEAR_RESOLVER = resolver_copy;
+
 const NEAR_SERVER_BACKUP = "::ffff:8.8.8.8";
+const NEAR_BACKUP_RESOLVER = resolver_copy;
 
 const IPV4_NEAR_PRECEDENCE = 1;
 const IPV4_FAR_PRECEDENCE  = 3;
@@ -166,7 +277,7 @@ function dnsSendQuery(session, client, message) {
       // LOG_DEBUG("response " + JSON.stringify(msg));
       // LOG_DEBUG("rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
 
-      const qname = msg.questions[0].name;
+      let qname = msg.questions[0].name;
       if (fake_request && qname.endsWith(DETECT_DOMAIN_SUFFIEX)) {
 
         const originName = qname.replace(DETECT_DOMAIN_SUFFIEX, "").toLowerCase();
@@ -182,7 +293,15 @@ function dnsSendQuery(session, client, message) {
         fake_answered = true;
       } else if ((rinfo.address == NEAR_SERVER || rinfo.address == NEAR_SERVER_BACKUP) && !near_answered) {
         near_answered = true;
-        session.nearCaches[msg.questions[0].type] = msg;
+		switch (rinfo.address) {
+			case NEAR_SERVER:
+				session.nearCaches[msg.questions[0].type] = msg = NEAR_RESOLVER.R(msg);
+				break;
+
+			case NEAR_SERVER_BACKUP:
+				session.nearCaches[msg.questions[0].type] = msg = NEAR_BACKUP_RESOLVER.R(msg);
+		}
+		qname = msg.questions[0].name;
         /*"Ok":"cachedOK":"cachedBad": */
         if (getDetectStatus(msg) == "Chaos") {
           LOG_DEBUG("detect start " + qname);
@@ -198,7 +317,7 @@ function dnsSendQuery(session, client, message) {
           client.reset();
         }
       } else if (rinfo.address == FAR_SERVER && !far_answered) {
-        session.farCaches[msg.questions[0].type] = msg;
+        session.farCaches[msg.questions[0].type] = FAR_RESOLVER.R(msg);
         far_answered = true;
       }
 
@@ -216,14 +335,17 @@ function dnsSendQuery(session, client, message) {
   const qname = msg.questions[0].name;
 
   // dnsSetClientSubnet(msg, "103.70.115.29");
-  const far_msg = dnsp.encode(msg);
+  msg.id = getRandomInt(65535);
+  const far_msg = dnsp.encode(FAR_RESOLVER.Q(msg));
   let far_out = v => far_answered || client.send(far_msg, FAR_PORT, FAR_SERVER, (err) => { LOG_DEBUG(` far send: ${qname} ${type} ${err}`); });
 
-  dnsSetClientSubnet(msg, "117.144.103.197");
   msg.id = getRandomInt(65535);
-  const near_msg = dnsp.encode(msg);
+  dnsSetClientSubnet(msg, "117.144.103.197");
+  const near_msg = dnsp.encode(NEAR_RESOLVER.Q(msg));
   let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
-  let backup_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER_BACKUP, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
+
+  const backup_msg = dnsp.encode(NEAR_BACKUP_RESOLVER.Q(msg));
+  let backup_out = v => near_answered || client.send(backup_msg, NEAR_PORT, NEAR_SERVER_BACKUP, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
 
   doAutoRetry(backup_out);
   doAutoRetry(near_out);
@@ -310,15 +432,12 @@ function getSession(key) {
   let session = {nearCaches: {}, farCaches: {}, types: {}, key: key, allows: {}, disableNat64: false};
   SESSION[key] = session;
 
-  if (key.includes(".cootail.com") || key.includes("603030.xyz")) session.disableNat64 = true;
+  if (key.includes(".cootail.com") || key.includes("603030.xyz") || key.includes("cachefiles.net")) session.disableNat64 = true;
 
   const preset_records = [
     {name: "ipv4only.arpa", type: "AAAA", data: "2002:1769:c6bd:ffff::"},
-    // stun.syncthing.net.     1704    IN      A       
     {name: "stun.softjoys.com", type: "A", data: "139.59.84.212"},
     {name: "stun.softjoys.com", type: "A", data: "198.211.120.59"},
-    // {name: "listen.10155.com", type: "A", data: "110.42.145.164"},
-    // {name: "www.google.com", type: "A", data: "8.8.8.80"},
 
     {name: "www.gstatic.com", type: "A", data: "203.208.40.2"},
     {name: "www.gstatic.com", type: "AAAA", data: "2401:3800:4002:807::1002"},
