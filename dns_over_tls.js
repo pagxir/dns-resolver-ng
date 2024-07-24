@@ -276,6 +276,11 @@ function dnsSendQuery(session, client, message) {
       let msg = dnsp.decode(segment);
       // LOG_DEBUG("response " + JSON.stringify(msg));
       // LOG_DEBUG("rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
+      if (msg && msg.questions && msg.questions.length > 0 && msg.questions[0].name) {
+          /* skip */
+      } else {
+          return ;
+      }
 
       let qname = msg.questions[0].name;
       if (fake_request && qname.endsWith(DETECT_DOMAIN_SUFFIEX)) {
@@ -534,6 +539,7 @@ function preference(json, prefMaps) {
       if (item.type == 'AAAA') {
         // LOG_DEBUG("item6.name " + item.name + " table=" + table.lookup6(item.data) + " data=" + item.data);
         pref = prefMaps[table.lookup6(item.data)];
+
         if (pref < best) best = pref;
       } else if (item.type == 'A') {
         // LOG_DEBUG("item4.name " + item.name + " table=" + table.lookup4(item.data) + " data=" + item.data);
@@ -730,6 +736,15 @@ function formatAnswer6(answers, domain) {
 
     if (item.name.toLowerCase() == key) {
       answer.name = domain;
+    }
+
+    /* 0x20, 0x24 map to 0x20 ^ 0x3f = 1f, 0x24 ^ 0x3f = 1b */
+    if (item.type == 'AAAA' && !table.lookup6(item.data)) {
+        if (item.data.startsWith("24")) {
+            answer.data = "1b" + item.data.substring(2);
+        } else if (item.data.startsWith("20")) {
+            answer.data = "1f" + item.data.substring(2);
+        }
     }
 
     if (item.type == 'A') {
