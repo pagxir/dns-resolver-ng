@@ -199,7 +199,7 @@ const resolver_coder = {
 };
 
 const FAR_PORT = 53;
-const FAR_SERVER = "64:ff9b::909:909";
+const FAR_SERVER = "64:ff9b::101:101";
 const FAR_RESOLVER = resolver_copy;
 
 const NEAR_PORT = 53;
@@ -275,7 +275,7 @@ function dnsSendQuery(session, client, message) {
     return (segment, rinfo) => {
       let msg = dnsp.decode(segment);
       // LOG_DEBUG("response " + JSON.stringify(msg));
-      // LOG_DEBUG("rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
+      LOG_DEBUG("onMessage rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
       if (msg && msg.questions && msg.questions.length > 0 && msg.questions[0].name) {
           /* skip */
       } else {
@@ -345,7 +345,7 @@ function dnsSendQuery(session, client, message) {
   let far_out = v => far_answered || client.send(far_msg, FAR_PORT, FAR_SERVER, (err) => { LOG_DEBUG(` far send: ${qname} ${type} ${err}`); });
 
   msg.id = getRandomInt(65535);
-  dnsSetClientSubnet(msg, "117.144.103.197");
+  // dnsSetClientSubnet(msg, "117.144.103.197");
   const near_msg = dnsp.encode(NEAR_RESOLVER.Q(msg));
   let near_out = v => near_answered || client.send(near_msg, NEAR_PORT, NEAR_SERVER, (err) => { LOG_DEBUG(`near send: ${qname} ${type} ${err}`); });
 
@@ -739,11 +739,11 @@ function formatAnswer6(answers, domain) {
     }
 
     /* 0x20, 0x24 map to 0x20 ^ 0x3f = 1f, 0x24 ^ 0x3f = 1b */
-    if (item.type == 'AAAA' && !table.lookup6(item.data)) {
+    if (item.type == 'AAAA' && table.lookup6(item.data)) {
         if (item.data.startsWith("24")) {
-            answer.data = "1b" + item.data.substring(2);
+          //  answer.data = "1b" + item.data.substring(2);
         } else if (item.data.startsWith("20")) {
-            answer.data = "1f" + item.data.substring(2);
+           // answer.data = "1f" + item.data.substring(2);
         }
     }
 
@@ -855,71 +855,75 @@ function preNat64Load(query) {
 }
 
 async function streamHandler(socket) {
-  const generator = handleRequest(socket);
+    const generator = handleRequest(socket);
 
-  const emptySend = (query) => {
-      query.type = "response";
-      query.rcode = dnsp.SERVFAIL;
-      sendSegment(socket, dnsp.encode(query));
-  };
+    const emptySend = (query) => {
+        query.type = "response";
+        query.rcode = dnsp.SERVFAIL;
+        sendSegment(socket, dnsp.encode(query));
+    };
 
-  const backcall = (session, query) => {
-    const qtype   = query.questions[0].type;
-    if (qtype == 'AAAA') {
-      const results = cacheFilter(session);
+    const backcall = (session, query) => {
+        const qtype   = query.questions[0].type;
+        if (qtype == 'AAAA') {
+            const results = cacheFilter(session);
 
-      query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
-      query.type = "response";
+            let newquery = session.farCaches[qtype];
+            newquery.id = query.id;
+            newquery.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+            newquery.questions = query.questions;
 
-      LOG_DEBUG("R: IPV6 " + JSON.stringify(results.ipv6));
-      sendSegment(socket, dnsp.encode(query));
-    } else if (qtype == 'A') {
-      const results = cacheFilter(session);
+            LOG_DEBUG("R: IPV6 " + JSON.stringify(results.ipv6));
+            sendSegment(socket, dnsp.encode(newquery));
+        } else if (qtype == 'A') {
+            const results = cacheFilter(session);
 
-      query.answers = formatAnswer(results.ipv4, query.questions[0].name);
-      query.type = "response";
+            let newquery = session.farCaches[qtype];
+            newquery.id = query.id;
+            newquery.answers = formatAnswer(results.ipv4, query.questions[0].name);
+            newquery.questions = query.questions;
 
-      LOG_DEBUG("R: IPV4 " + JSON.stringify(results.ipv4));
-      sendSegment(socket, dnsp.encode(query));
-    } else {
-      LOG_DEBUG("R: OUTE ");
-      query.answers = session.farCaches[qtype].answers;
-      query.type = "response";
-      sendSegment(socket, dnsp.encode(query));
+            LOG_DEBUG("R: IPV4 " + JSON.stringify(results.ipv4));
+            sendSegment(socket, dnsp.encode(newquery));
+        } else {
+            LOG_DEBUG("R: OUTE ");
+            query.answers = session.farCaches[qtype].answers;
+            query.type = "response";
+            sendSegment(socket, dnsp.encode(query));
+        }
     }
-  }
 
-  let pendings = []
+    let pendings = []
 
-  const flush_pendings = (session, one) => {
-    one.session = session
-    one.state   = "DONE"
-    one.aborted = false
+        const flush_pendings = (session, one) => {
+            one.session = session
+                one.state   = "DONE"
+                one.aborted = false
 
-    while (pendings.length > 0 && pendings[0].state == "DONE") {
-      let two = pendings.shift()
-      two.aborted || backcall(two.session, two.query)
-      two.aborted && emptySend(two.query)
+                while (pendings.length > 0 && pendings[0].state == "DONE") {
+                    let two = pendings.shift()
+                        two.aborted || backcall(two.session, two.query)
+                        two.aborted && emptySend(two.query)
+                }
+        }
+
+    const query_exception = one => {
+        LOG_ERROR("TODO:XXX failure " + JSON.stringify(one.query))
+            one.state   = "DONE"
+            one.aborted = true
+
+            while (pendings.length > 0 && pendings[0].state == "DONE") {
+                let two = pendings.shift()
+                    two.aborted || backcall(two.session, two.query)
+                    two.aborted && emptySend(two.query)
+            }
     }
-  }
 
-  const query_exception = one => {
-    LOG_ERROR("TODO:XXX failure " + JSON.stringify(one.query))
-    one.state   = "DONE"
-    one.aborted = true
-
-    while (pendings.length > 0 && pendings[0].state == "DONE") {
-      let two = pendings.shift()
-      two.aborted || backcall(two.session, two.query)
-      two.aborted && emptySend(two.query)
+    for await (const [promise, query] of generator) {
+        const one = {query: query, state: "PENDING", aborted: false}
+        pendings.push(one)
+            promise.then(session => flush_pendings(session, one), v => query_exception(one))
     }
-  }
-
-  for await (const [promise, query] of generator) {
-    const one = {query: query, state: "PENDING", aborted: false}
-    pendings.push(one)
-    promise.then(session => flush_pendings(session, one), v => query_exception(one))
-  }
 }
 
 const server = tls.createServer(options, (socket) => {
@@ -1066,7 +1070,6 @@ async function requestFetch(req, res) {
 				case 'AAAA':
 					session = await dnsFetchQuery(fragment);
 					results = cacheFilter(session);
-
 					query.type = "response";
 					query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
 
@@ -1148,7 +1151,6 @@ async function requestFetch(req, res) {
 				await preNat64Load(query);
 				session = await dnsFetchQuery(fragment);
 				results = cacheFilter(session);
-
 				query.type = "response";
 				query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
 
@@ -1196,7 +1198,6 @@ async function requestFetch(req, res) {
 			case 'A':
 				session = await dnsFetchQuery(fragment);
 				results = cacheFilter(session);
-
 				query.type = "response";
 				query.answers = results.ipv4;
 				query.answers = formatAnswer(results.ipv4, query.questions[0].name);
@@ -1324,52 +1325,73 @@ httpserver.listen(18000);
 const udpserver = dgram.createSocket('udp4');
 
 function onFailure(e) {
-	LOG_ERROR("UDP SERVER error = " + e);
+    LOG_ERROR("UDP SERVER error = " + e);
+}
+
+async function dnsQuery(query, config, segment) {
+    const qtype = query.questions[0].type;
+    let promise;
+    let session;
+    let newquery;
+    let results;
+
+    switch (qtype) {
+        case 'AAAA':
+            promise = dnsFetchQuery(segment);
+            preNat64Load(query).catch(v => {});
+
+            session = await promise;
+            results = cacheFilter(session);
+            query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
+            query.type = "response";
+
+            newquery = session.farCaches[qtype];
+            newquery.id = query.id;
+            newquery.answers = query.answers;
+            newquery.questions = query.questions;
+            return newquery;
+
+        case 'A':
+            promise = dnsFetchQuery(segment);
+
+            session = await promise;
+            results = cacheFilter(session);
+
+            query.answers = formatAnswer(results.ipv4, query.questions[0].name);
+            query.type = "response";
+
+            newquery = session.farCaches[qtype];
+            newquery.id = query.id;
+            newquery.answers = query.answers;
+            newquery.questions = query.questions;
+            return newquery;
+
+        default:
+            session = {nearCaches: {}, farCaches: {}, key: query.questions[0].name.toLowerCase(), allows: {}, types: {}};
+            promise = dnsDispatchQuery(session, dnsp.decode(segment));
+
+            session = await promise;
+            query.answers = session.farCaches[qtype].answers;
+            query.type = "response";
+
+            newquery = session.farCaches[qtype];
+            newquery.id = query.id;
+            return newquery;
+    }
 }
 
 async function onDnsQuery(segment, rinfo) {
-	LOG_DEBUG("UDP SERVER rinfo " + rinfo.address);
+    LOG_DEBUG("UDP SERVER rinfo " + rinfo.address);
+    let config = {};
 
-	const query = dnsp.decode(segment);
-	const qtype = query.questions[0].type;
-try {
-	if (query.questions[0].type == 'AAAA') {
-		const promise = dnsFetchQuery(segment);
-		preNat64Load(query).catch(v => {});
-
-		let session = await promise;
-		const results = cacheFilter(session);
-		query.answers = formatAnswer6(results.ipv6, query.questions[0].name);
-		query.type = "response";
-
-		let out_segment = dnsp.encode(query);
-		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
-
-	} else if (query.questions[0].type == 'A') {
-		const promise = dnsFetchQuery(segment);
-
-		let session = await promise;
-		const results = cacheFilter(session);
-		query.answers = formatAnswer(results.ipv4, query.questions[0].name);
-		query.type = "response";
-
-		let out_segment = dnsp.encode(query);
-		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
-
-	} else {
-		let  session = {nearCaches: {}, farCaches: {}, key: query.questions[0].name.toLowerCase(), allows: {}, types: {}};
-		const promise = dnsDispatchQuery(session, dnsp.decode(segment));
-
-		session = await promise;
-		query.answers = session.farCaches[qtype].answers;
-		query.type = "response";
-
-		let out_segment = dnsp.encode(query);
-		udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
-	}
-} catch (e) {
-	LOG_ERROR("UDP FAILURE" + e);
-}
+    try {
+        const query = dnsp.decode(segment);
+        const response = await dnsQuery(query, config, segment);
+        let out_segment = dnsp.encode(response);
+        udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
+    } catch (e) {
+        LOG_ERROR("UDP FAILURE " + e);
+    }
 }
 
 udpserver.on('error', onFailure);
