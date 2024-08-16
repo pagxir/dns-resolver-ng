@@ -194,7 +194,7 @@ const http1 = http.createServer(options, (req, res) => { });
 http1.listen(1800);
 
 const tls1 = tls.createServer(options, prepareDnsSegment);
-tls1.listen(8530,  () => { });
+tls1.listen(853,  () => { });
 
 const tcp1 = net.createServer(options, prepareDnsSegment);
 tcp1.listen(5300,  () => { });
@@ -221,7 +221,7 @@ function onFailure(e) {
 const udp6 = dgram.createSocket('udp6');
 udp6.on('error', onFailure);
 udp6.on('message', onDnsQuery.bind(udp6));
-udp6.bind(53, '64:ff9b::1');
+udp6.bind(53, '64:ff9b::127.9.9.9');
 
 const udp = dgram.createSocket('udp4');
 udp.on('error', onFailure);
