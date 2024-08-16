@@ -193,6 +193,7 @@ const resolver_coder = {
     const name_origin = msg.questions[0].name;
     const name_decoded = name_decode(name_origin);
 
+    msg.questions[0].name = name_decoded;
     msg.answers.map(item => { return item.name == name_origin && (item.name = name_decoded); });
     return msg;
   },
@@ -264,6 +265,19 @@ function getRandomInt(max) {
   return Math.floor(Math.random() * max);
 }
 
+function dnsParseDecode(segment) {
+
+  try {
+	let q = dnsp.decode(segment);
+	if (q && q.questions && q.questions.length > 0 && q.questions[0].name)
+	  return q;
+  } catch (e) {
+    LOG_ERROR("dnsParseDecode" + e);
+  }
+
+  return QUERY_DOMAIN_JSON;
+}
+
 function dnsSendQuery(session, client, message) {
   let near_answered = false;
   let far_answered = false;
@@ -273,7 +287,7 @@ function dnsSendQuery(session, client, message) {
 
   const onMessage = function(resolv) {
     return (segment, rinfo) => {
-      let msg = dnsp.decode(segment);
+      let msg = dnsParseDecode(segment);
       // LOG_DEBUG("response " + JSON.stringify(msg));
       LOG_DEBUG("onMessage rinfo " + rinfo.address + " fast " + NEAR_SERVER + " slow " + FAR_SERVER);
       if (msg && msg.questions && msg.questions.length > 0 && msg.questions[0].name) {
@@ -492,7 +506,7 @@ function getSession(key) {
 
 function dnsFetchQuery(fragment, preload = false) {
 
-  const query = dnsp.decode(fragment);
+  const query = dnsParseDecode(fragment);
   const domain = query.questions[0].name;
   const qtype  = query.questions[0].type;
 
@@ -699,7 +713,7 @@ try {
 
       const fragment = stream.slice(2, segsize + 2);
 
-      const query = dnsp.decode(fragment);
+      const query = dnsParseDecode(fragment);
       if (query.questions[0].type == 'AAAA') {
         const promise = dnsFetchQuery(fragment);
         preNat64Load(query).catch(v => {});
@@ -1018,7 +1032,7 @@ function isGoogleDomain(fqdn, answsers)
 
     const onMessage = function(resolv) {
         return (segment, rinfo) => {
-            let msg = dnsp.decode(segment);
+            let msg = dnsParseDecode(segment);
             LOG_DEBUG("isGoogle " + msg.rcode);
             google_answered = true;
             resolv(msg.rcode != "REFUSED");
@@ -1060,7 +1074,7 @@ async function requestFetch(req, res) {
 			const pairs = querystring.parse(path.split("?")[1]);
 			console.log("dns=" + pairs.dns);
 			const fragment = Buffer.from(pairs.dns, 'base64');
-			const query = dnsp.decode(fragment);
+			const query = dnsParseDecode(fragment);
 			const qtype = query.questions[0].type;
 			let results = null, session = {nearCaches: {}, farCaches: {}};
 
@@ -1095,7 +1109,7 @@ async function requestFetch(req, res) {
 					let mydomain = query.questions[0].name;
 
 					if (!results || !results.farCaches)
-						results = await dnsDispatchQuery(session, dnsp.decode(fragment));
+						results = await dnsDispatchQuery(session, dnsParseDecode(fragment));
 
 					query.answers = results.farCaches[qtype].answers;
 					query.type = "response";
@@ -1129,7 +1143,7 @@ async function requestFetch(req, res) {
 			buffers.push(data);
 		const fragment = Buffer.concat(buffers);
 
-		const query = dnsp.decode(fragment);
+		const query = dnsParseDecode(fragment);
 		const qtype = query.questions[0].type;
 		let results = null, session = {nearCaches: {}, farCaches: {}};
 
@@ -1242,7 +1256,7 @@ async function requestFetch(req, res) {
 				}
 
 				if (!results || !results.farCaches)
-					results = await dnsDispatchQuery(session, dnsp.decode(fragment));
+					results = await dnsDispatchQuery(session, dnsParseDecode(fragment));
 
 				query.answers = results.farCaches[qtype].answers.map(filter_facing_cb);
 				query.type = "response";
@@ -1368,7 +1382,7 @@ async function dnsQuery(query, config, segment) {
 
         default:
             session = {nearCaches: {}, farCaches: {}, key: query.questions[0].name.toLowerCase(), allows: {}, types: {}};
-            promise = dnsDispatchQuery(session, dnsp.decode(segment));
+            promise = dnsDispatchQuery(session, dnsParseDecode(segment));
 
             session = await promise;
             query.answers = session.farCaches[qtype].answers;
@@ -1385,7 +1399,7 @@ async function onDnsQuery(segment, rinfo) {
     let config = {};
 
     try {
-        const query = dnsp.decode(segment);
+        const query = dnsParseDecode(segment);
         const response = await dnsQuery(query, config, segment);
         let out_segment = dnsp.encode(response);
         udpserver.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
