@@ -1,6 +1,6 @@
 import dgram from 'dgram';
 import dnspacket from 'dns-packet';
-import {lookup4, lookup6} from './apnic-table-6.js';
+import {lookup6, lookup4} from './apnic-table-6.js';
 
 const LOG_DEBUG = console.log;
 const LOG_ERROR = console.log;
@@ -197,18 +197,20 @@ function filterIpv4(results, useNat64) {
   return results[2];
 }
 
-function dnsQuery(message) {
+function dnsQueryImpl(message, useNat64) {
   const type = message.questions[0].type;
   const name = message.questions[0].name;
 
   if (type === 'A' || type == 'AAAA') {
     let message4 = Object.assign({}, message);
     let question4 = Object.assign({}, message.questions[0]);
+
     question4.type = 'A';
     message4.questions = [question4];
 
     let message6 = Object.assign({}, message);
     let question6 = Object.assign({}, message.questions[0]);
+
     question6.type = 'AAAA';
     message6.questions = [question6];
 
@@ -222,12 +224,13 @@ function dnsQuery(message) {
     return Promise.all(all).then(results => {
       const filter = type == 'AAAA'? filterIpv6: filterIpv4;
 
-      LOG_DEBUG("primary ipv4=" + JSON.stringify(results[0].answers));
-      LOG_DEBUG("primary ipv6=" + JSON.stringify(results[1].answers));
-      LOG_DEBUG("secondary ipv4=" + JSON.stringify(results[2].answers));
-      LOG_DEBUG("secondary ipv6=" + JSON.stringify(results[3].answers));
+      results[0].answers.map(item => LOG_DEBUG("  primary ipv4=" + JSON.stringify(item)));
+      results[1].answers.map(item => LOG_DEBUG("  primary ipv6=" + JSON.stringify(item)));
 
-      return filter(results, checkNat64(name));
+      results[2].answers.map(item => LOG_DEBUG("secondary ipv4=" + JSON.stringify(item)));
+      results[3].answers.map(item => LOG_DEBUG("secondary ipv6=" + JSON.stringify(item)));
+
+      return filter(results, useNat64 && checkNat64(name));
     });
   }
 
@@ -236,4 +239,43 @@ function dnsQuery(message) {
   return Promise.any([primary, secondary]);
 }
 
-export { dnsQuery };
+const dnsQuery = message => dnsQueryImpl(message, true);
+const dnsQuerySimple = message => dnsQueryImpl(message, false);
+
+function dnsQueryECH(message) {
+  const type = message.questions[0].type;
+  const name = message.questions[0].name;
+  const facingName = "facing.cootail.com";
+
+  let echMessage = Object.assign({}, message);
+  switch (type) {
+    case 'AAAA':
+    case 'A':
+    case 'UNKNOWN_65':
+      echMessage.questions = [{name: facingName, type}];
+      break;
+
+    default:
+      LOG_DEBUG("type = " + type);
+      echMessage.questions = [{name, type}];
+      break;
+  }
+
+  let echSecondary = dnsQueryInternal(secondaryCache, echMessage);
+
+  let formatCb = result => {
+    let o = Object.assign({}, result); 
+
+    o.questions = message.questions;
+    o.answers = result.answers.map(item => {
+      let v = Object.assign({}, item);
+      if (v.name == facingName) v.name = name;
+      return v;
+    });
+    return o;
+  };
+
+  return echSecondary.then(formatCb);
+}
+
+export { dnsQuery, dnsQueryECH, dnsQuerySimple };
