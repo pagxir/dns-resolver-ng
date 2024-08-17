@@ -83,9 +83,10 @@ function dnsCache(server, port) {
   return this;
 }
 
-let primaryCache = new dnsCache("::ffff:192.168.1.1", 53);
-let primaryCache6 = new dnsCache("2001:4860:4860::8888", 53);
-let secondaryCache = new dnsCache("64:ff9b::101:101", 53);
+const oilingCache = new dnsCache("::ffff:202.12.30.131", 53);
+const primaryCache = new dnsCache("::ffff:192.168.1.1", 53);
+const primaryCache6 = new dnsCache("2001:4860:4860::8888", 53);
+const secondaryCache = new dnsCache("64:ff9b::101:101", 53);
 
 function dnsQueryInternal(cache, message) {
   let name = message.questions[0].name;
@@ -137,7 +138,12 @@ function filterIpv6(results, isNat64) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
+  let oiling = (results[4].rcode != "REFUSED");
+
   if (!isNat64) {
+
+    if (oiling) 
+      return results[3];
 
     if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
       return results[1];
@@ -145,7 +151,7 @@ function filterIpv6(results, isNat64) {
     return results[3];
   }
 
-  if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data))) {
+  if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data))) {
     return last;
   }
 
@@ -169,7 +175,7 @@ function filterIpv6(results, isNat64) {
     return last;
   }
 
-  if (results[3].answers.some(item => item.type == 'AAAA' && lookup6(item.data))) {
+  if (oiling || results[3].answers.some(item => item.type == 'AAAA' && lookup6(item.data))) {
     return results[3];
   }
 
@@ -188,8 +194,9 @@ function checkNat64(name) {
 }
 
 function filterIpv4(results, useNat64) {
+  let oiling = (results[4].rcode != "REFUSED");
 
-  if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data))) {
+  if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data))) {
     return results[0];
   }
 
@@ -213,13 +220,14 @@ function dnsQueryImpl(message, useNat64) {
     question6.type = 'AAAA';
     message6.questions = [question6];
 
+    let oiling6 = dnsQueryInternal(oilingCache, message6);
     let primary4 = dnsQueryInternal(primaryCache, message4);
     let primary6 = dnsQueryInternal(primaryCache6, message6);
 
     let secondary4 = dnsQueryInternal(secondaryCache, message4);
     let secondary6 = dnsQueryInternal(secondaryCache, message6);
 
-    let all = [primary4, primary6, secondary4, secondary6];
+    let all = [primary4, primary6, secondary4, secondary6, oiling6];
     return Promise.all(all).then(results => {
       const filter = type == 'AAAA'? filterIpv6: filterIpv4;
 
@@ -228,6 +236,8 @@ function dnsQueryImpl(message, useNat64) {
 
       results[2].answers.map(item => LOG_DEBUG("secondary ipv4=" + JSON.stringify(item)));
       results[3].answers.map(item => LOG_DEBUG("secondary ipv6=" + JSON.stringify(item)));
+
+      LOG_DEBUG("oiling=" + results[4].rcode);
 
       return filter(results, useNat64 && checkNat64(name));
     });
