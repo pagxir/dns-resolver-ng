@@ -55,7 +55,7 @@ async function onAccept(socket) {
     }
   }
 
-  if (table.isCloudflareIp(TWO)) {
+  if (isCloudflareIp(TWO)) {
     TWO = "one.cachefiles.net";
     PORT = 40403;
   }
