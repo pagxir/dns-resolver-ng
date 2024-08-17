@@ -160,6 +160,12 @@ async function prepareDnsSegment(client) {
     dnsNotify(context);
   });
 
+  client.on('error', (data) => {
+    let fireout = context.reject;
+    context.reject = EmptyFunc;
+    fireout("error");
+  });
+
   client.on('end', () => {
     let fireout = context.reject;
     context.reject = EmptyFunc;
@@ -189,6 +195,8 @@ async function prepareDnsSegment(client) {
   } catch (e) {
     LOG_DEBUG(`exception ${e}`);
   }
+
+  client.end();
 }
 
 const http1 = http.createServer(options, (req, res) => { });

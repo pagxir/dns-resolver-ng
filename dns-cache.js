@@ -83,7 +83,7 @@ function dnsCache(server, port) {
   return this;
 }
 
-let primaryCache = new dnsCache("::ffff:223.5.5.5", 53);
+let primaryCache = new dnsCache("::ffff:192.168.1.1", 53);
 let primaryCache6 = new dnsCache("2001:4860:4860::8888", 53);
 let secondaryCache = new dnsCache("64:ff9b::101:101", 53);
 
@@ -180,7 +180,6 @@ function checkNat64(name) {
   const key = name.toLowerCase();
 
   if (key == "mtalk.google.com") return false;
-  if (key == "www.google.com") return false;
   if (key == "www.gstatic.com") return false;
   if (key == "www.googleapis.cn") return false;
   if (key == "connectivitycheck.gstatic.com") return false;
