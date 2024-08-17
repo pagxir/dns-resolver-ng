@@ -1,44 +1,8 @@
 import dgram from 'dgram';
 import dnspacket from 'dns-packet';
 import {lookup6, lookup4} from './apnic-table-6.js';
-
-const LOG_DEBUG = console.log;
-const LOG_ERROR = console.log;
-
-const dnsObject = {
-  type: 'query',
-  id: 26858,
-  flags: dnspacket.RECURSION_DESIRED,
-  questions: [{
-    type: 'A',
-    name: 'google.com'
-  }],
-  answers: []
-};
-
-const dnsParse = segment => {
-
-  try {
-    const msg = dnspacket.decode(segment);
-
-    if (!msg || !msg.questions || !msg.questions.length) {
-      return dnsObject;
-    }
-
-    if (msg.questions[0].name) {
-      return msg;
-    }
-
-  } catch (e) {
-
-  }
-
-  return dnsObject;
-}
-
-const dnsBuild = message => {
-  return dnspacket.encode(message);
-}
+import { LOG_ERROR, LOG_DEBUG } from './dns-utils.js';
+import { dnsParse, dnsBuild, dnsObject } from './dns-utils.js';
 
 function getSession(key) {
 
