@@ -1,8 +1,11 @@
+import net from 'net';
+import { WebSocket, createWebSocketStream } from 'ws';
 import { TcpPortList } from './config.js';
 import { isCloudflareIp }  from './apnic-table-6.js';
 
 const LOG_DEBUG = console.log;
 const nullFunc = () => {};
+const options = {};
 
 function localConnect(socket, host, port) {
   const client = net.createConnection({host: host, port: port}, nullFunc);
@@ -64,7 +67,7 @@ async function onAccept(socket) {
   LOG_DEBUG("URL: " + url);
   const ws = new WebSocket(url);
 
-  const duplex = WebSocket.createWebSocketStream(ws, { });
+  const duplex = createWebSocketStream(ws, { });
   duplex.on('error', console.error);
   ws.timer = setInterval(v => ws.ping(), 5000);
 
