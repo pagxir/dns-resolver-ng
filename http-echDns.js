@@ -1,3 +1,4 @@
+import fs from 'fs';
 import http from 'http';
 import dgram from 'dgram';
 import assert from 'assert';
@@ -98,6 +99,34 @@ async function processHttpDns(req, res) {
     const fragment = Buffer.concat(buffers);
     const out_segment = await httpEchQuery(fragment);
     dns_cb(out_segment);
+    return;
+  }
+
+  if (path.startsWith("/notatall/")) {
+    try {
+      let mimeType = "application/octet-stream";
+      if (path.endsWith(".html") || path.endsWith(".htm")) {
+        mimeType = "text/html";
+      } else if (path.endsWith(".png")) {
+        mimeType = "image/png";
+      } else if (path.endsWith("yaml")) {
+        mimeType = "text/yaml";
+      }
+
+      let stat = fs.statSync("./" + path);
+      if (!stat.isDirectory()) {
+        let rs = fs.createReadStream("./" + path, {
+          highWaterMark: 65536
+        })
+        res.setHeader("Content-Type", mimeType);
+        res.setHeader("Content-Length", stat.size);
+        res.statusCode = 200;
+        rs.pipe(res);
+      }
+    } catch(e) {
+      LOG_ERROR('XError:', e.stack);
+      res.end();
+    }
     return;
   }
 
