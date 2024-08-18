@@ -98,11 +98,14 @@ function dnsQueryInternal(cache, message) {
 
 const NAT64_PREFIX = "64:ff9b::";
 
-function filterIpv6(results, isNat64) {
+function dnsCheckOiling(message) {
+  const checking = dnsQueryInternal(oilingCache, message);
+  return checking.then(msg => msg.rcode != "REFUSED");
+}
+
+function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
-
-  let oiling = (results[4].rcode != "REFUSED");
 
   if (!isNat64) {
 
@@ -157,8 +160,7 @@ function checkNat64(name) {
   return !(key.includes(".cootail.com") || key.includes("603030.xyz") || key.includes("cachefiles.net"));
 }
 
-function filterIpv4(results, useNat64) {
-  let oiling = (results[4].rcode != "REFUSED");
+function filterIpv4(results, useNat64, oiling) {
 
   if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data))) {
     return results[0];
@@ -184,7 +186,7 @@ function dnsQueryImpl(message, useNat64) {
     question6.type = 'AAAA';
     message6.questions = [question6];
 
-    let oiling6 = dnsQueryInternal(oilingCache, message6);
+    let oiling6 = dnsCheckOiling(message6);
     let primary4 = dnsQueryInternal(primaryCache, message4);
     let primary6 = dnsQueryInternal(primaryCache6, message6);
 
@@ -201,9 +203,9 @@ function dnsQueryImpl(message, useNat64) {
       results[2].answers.map(item => LOG_DEBUG("secondary ipv4=" + JSON.stringify(item)));
       results[3].answers.map(item => LOG_DEBUG("secondary ipv6=" + JSON.stringify(item)));
 
-      LOG_DEBUG("oiling=" + results[4].rcode);
+      LOG_DEBUG("oiling=" + results[4]);
 
-      return filter(results, useNat64 && checkNat64(name));
+      return filter(results, useNat64 && checkNat64(name), results[4]);
     });
   }
 
