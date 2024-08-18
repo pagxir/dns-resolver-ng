@@ -115,12 +115,14 @@ function filterIpv6(results, isNat64, oiling) {
     if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
       return results[1];
 
+    if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
+      return last;
+
     return results[3];
   }
 
-  if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data))) {
+  if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
     return last;
-  }
 
   if (results[2].answers.some(item => item.type == 'A' && lookup4(item.data))) {
     let rebuild = results[2];
@@ -142,9 +144,8 @@ function filterIpv6(results, isNat64, oiling) {
     return last;
   }
 
-  if (oiling || results[3].answers.some(item => item.type == 'AAAA' && lookup6(item.data))) {
+  if (oiling || results[3].answers.some(item => item.type == 'AAAA' && lookup6(item.data)))
     return results[3];
-  }
 
   return results[1];
 }
