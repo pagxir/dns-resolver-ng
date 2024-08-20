@@ -103,6 +103,34 @@ function dnsCheckOiling(message) {
   return checking.then(msg => msg.rcode != "REFUSED");
 }
 
+function AsiaWrap(message) {
+    if (!checkNat64(message.questions[0].name)) return message;
+
+    let question = Object.assign({}, message.questions[0]);
+    question.type = 'AAAA';
+
+    let last = Object.assign({}, message);
+    last.questions = [question];
+
+    last.answers = message.answers.map(item => {
+      let o = Object.assign({}, item);
+      if (o.type == 'AAAA') {
+       const parts = o.data.split(':');
+       if (parts.length > 0 && parts[0].length > 0) {
+         const prefix = parseInt(parts[0], 16);
+         if ((prefix & 0xfff0) == 0x2400) {
+           o.data = '1' + o.data.slice(1);
+         } else if (prefix  == 0x2001) {
+           o.data = '1' + o.data.slice(1);
+         }
+       }
+      }
+      return o;
+    });
+
+    return last;
+}
+
 function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
@@ -110,7 +138,7 @@ function filterIpv6(results, isNat64, oiling) {
   if (!isNat64) {
 
     if (oiling) 
-      return results[3];
+      return AsiaWrap(results[3]);
 
     if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
       return results[1];
@@ -118,7 +146,7 @@ function filterIpv6(results, isNat64, oiling) {
     if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
       return last;
 
-    return results[3];
+    return AsiaWrap(results[3]);
   }
 
   if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
@@ -145,7 +173,7 @@ function filterIpv6(results, isNat64, oiling) {
   }
 
   if (oiling || results[3].answers.some(item => item.type == 'AAAA' && lookup6(item.data)))
-    return results[3];
+    return AsiaWrap(results[3]);
 
   return results[1];
 }
@@ -210,9 +238,10 @@ function dnsQueryImpl(message, useNat64) {
     });
   }
 
+  LOG_DEBUG("QUERY: " + JSON.stringify(message.questions));
   let primary = dnsQueryInternal(primaryCache, message);
   let secondary = dnsQueryInternal(secondaryCache, message);
-  return Promise.any([primary, secondary]);
+  return Promise.any([secondary, primary]);
 }
 
 const dnsQuery = message => dnsQueryImpl(message, true);
