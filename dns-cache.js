@@ -43,14 +43,58 @@ function dnsCache(server, port) {
 
   this.FAR_PORT = port;
   this.FAR_SERVER = server;
+  this.dnsParse = dnsParse;
+  this.dnsBuild = dnsBuild;
 
   return this;
+}
+
+function makeDnsCache64(cache) {
+  let dore = {};
+
+  dore.cache = cache;
+  dore.getSession = name => cache.getSession(name);
+  dore.FAR_PORT = cache.FAR_PORT;
+  dore.FAR_SERVER = cache.FAR_SERVER;
+
+  dore.dnsParse = data => {
+    let origin = dnsParse(data);
+    let question = Object.assign({}, origin.questions[0]);
+    question.type = 'AAAA';
+
+    let message = Object.assign({}, origin);
+    message.questions = [question];
+
+    message.answers = origin.answers.map(item => {
+      let o = Object.assign({}, item); 
+      if (o.type == 'A') {
+	o.type = 'AAAA';
+	o.data = NAT64_PREFIX + o.data;
+      }
+      return o;
+    });
+
+    return message;
+  };
+
+  dore.dnsBuild = message => {
+    let question = Object.assign({}, message.questions[0]);
+    question.type = 'A';
+
+    let dataview = Object.assign({}, message);
+    dataview.questions = [question];
+
+    return dnsBuild(dataview);
+  };
+
+  return dore;
 }
 
 const oilingCache = new dnsCache("::ffff:202.12.30.131", 53);
 const primaryCache = new dnsCache("::ffff:192.168.1.1", 53);
 const primaryCache6 = new dnsCache("2001:4860:4860::8888", 53);
 const secondaryCache = new dnsCache("64:ff9b::101:101", 53);
+const secondaryCache6 = makeDnsCache64(secondaryCache);
 
 function dnsQueryInternal(cache, message) {
   let name = message.questions[0].name;
@@ -74,7 +118,7 @@ function dnsQueryInternal(cache, message) {
 
     const on_message = (data, rinfo) => {
       LOG_DEBUG("rinfo " + rinfo.address + " fast " + data.length);
-      const result = dnsParse(data);
+      const result = cache.dnsParse(data);
       const fire = (result == dnsObject? reject: resolv);
 
       session[type] = result;
@@ -84,7 +128,7 @@ function dnsQueryInternal(cache, message) {
     };
 
     const c = cache;
-    const oil_msg = dnsBuild(message);
+    const oil_msg = cache.dnsBuild(message);
 
     udp6.on("message", on_message.bind(udp6));
     const cb = i => udp6.send(oil_msg, c.FAR_PORT, c.FAR_SERVER, LOG_DEBUG);
@@ -220,7 +264,7 @@ function dnsQueryImpl(message, useNat64) {
     let primary6 = dnsQueryInternal(primaryCache6, message6);
 
     let secondary4 = dnsQueryInternal(secondaryCache, message4);
-    let secondary6 = dnsQueryInternal(secondaryCache, message6);
+    let secondary6 = dnsQueryInternal(secondaryCache6, message6);
 
     let all = [primary4, primary6, secondary4, secondary6, oiling6];
     return Promise.all(all).then(results => {
