@@ -155,10 +155,24 @@ function dnsQueryInternal(cache, message) {
 
 const NAT64_PREFIX = "64:ff9b::";
 
-function dnsCheckOiling(message) {
-  const checking = dnsQueryInternal(oilingCache, message);
-  return checking.then(msg => msg.rcode != "REFUSED");
+function dnsCheckOilingChina(message) {
+   const checking = dnsQueryInternal(oilingCache, message);
+   return checking.then(msg => msg.rcode != "REFUSED");
+ }
+
+function dnsCheckOilingGlobal(message) {
+  let message4 = Object.assign({}, message);
+  let question4 = Object.assign({}, message.questions[0]);
+
+  question4.name = question4.name + ".oil.cootail.com";
+  question4.type = 'A';
+  message4.questions = [question4];
+
+  const checking = dnsQueryInternal(secondaryCache, message4);
+  return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
 }
+
+const dnsCheckOiling = dnsCheckOilingChina;
 
 function AsiaWrap(message) {
     if (!checkNat64(message.questions[0].name)) return message;
