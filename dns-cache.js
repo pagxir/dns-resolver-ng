@@ -51,11 +51,10 @@ function dnsCache(server, port) {
 
 function checkNat64(name) {
   const key = name.toLowerCase();
+  const Domains = ["mtalk.google.com", "www.gstatic.com", "www.googleapis.cn", "connectivitycheck.gstatic.com"];
 
-  if (key == "mtalk.google.com") return false;
-  if (key == "www.gstatic.com") return false;
-  if (key == "www.googleapis.cn") return false;
-  if (key == "connectivitycheck.gstatic.com") return false;
+  if (Domains.some(item => item == key))
+    return false;
 
   return !(key.includes(".cootail.com") || key.includes("603030.xyz") || key.includes("cachefiles.net"));
 }
@@ -72,6 +71,7 @@ function makeDnsCache64(cache) {
     let origin = dnsParse(data);
     let question = Object.assign({}, origin.questions[0]);
     question.type = 'AAAA';
+
     if (!checkNat64(question.name)) return origin;
 
     let message = Object.assign({}, origin);
@@ -209,7 +209,7 @@ function filterIpv6(results, isNat64, oiling) {
   if (oiling) 
     return AsiaWrap(results[3]);
 
-  if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
+  if (results[1].answers.some(item => item.type == 'AAAA' && !(isNat64 && lookup6(item.data))))
     return results[1];
 
   if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
@@ -218,7 +218,7 @@ function filterIpv6(results, isNat64, oiling) {
   if (results[3].answers.some(item => item.type == 'AAAA'))
     return AsiaWrap(results[3]);
 
-  return AsiaWrap(results[1]);
+  return results[1];
 }
 
 function filterIpv4(results, useNat64, oiling) {
@@ -264,9 +264,9 @@ function dnsQueryImpl(message, useNat64) {
       results[2].answers.map(item => LOG_DEBUG("secondary ipv4=" + JSON.stringify(item)));
       results[3].answers.map(item => LOG_DEBUG("secondary ipv6=" + JSON.stringify(item)));
 
-      LOG_DEBUG("oiling=" + results[4]);
+      LOG_DEBUG(name + " oiling=" + results[4] + " nat64 " + checkNat64(name));
 
-      return filter(results, useNat64 && checkNat64(name), results[4]);
+      return filter(results, checkNat64(name), results[4]);
     });
   }
 
