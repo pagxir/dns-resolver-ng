@@ -49,6 +49,17 @@ function dnsCache(server, port) {
   return this;
 }
 
+function checkNat64(name) {
+  const key = name.toLowerCase();
+
+  if (key == "mtalk.google.com") return false;
+  if (key == "www.gstatic.com") return false;
+  if (key == "www.googleapis.cn") return false;
+  if (key == "connectivitycheck.gstatic.com") return false;
+
+  return !(key.includes(".cootail.com") || key.includes("603030.xyz") || key.includes("cachefiles.net"));
+}
+
 function makeDnsCache64(cache) {
   let dore = {};
 
@@ -61,6 +72,7 @@ function makeDnsCache64(cache) {
     let origin = dnsParse(data);
     let question = Object.assign({}, origin.questions[0]);
     question.type = 'AAAA';
+    if (!checkNat64(question.name)) return origin;
 
     let message = Object.assign({}, origin);
     message.questions = [question];
@@ -79,7 +91,8 @@ function makeDnsCache64(cache) {
 
   dore.dnsBuild = message => {
     let question = Object.assign({}, message.questions[0]);
-    question.type = 'A';
+    if (checkNat64(question.name))
+      question.type = 'A';
 
     let dataview = Object.assign({}, message);
     dataview.questions = [question];
@@ -179,58 +192,19 @@ function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
-  if (!isNat64) {
-
-    if (oiling) 
-      return AsiaWrap(results[3]);
-
-    if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
-      return results[1];
-
-    if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
-      return last;
-
-    return AsiaWrap(results[3]);
-  }
-
-  if (!oiling && results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
-    return last;
-
-  if (results[2].answers.some(item => item.type == 'A' && lookup4(item.data))) {
-    let rebuild = results[2];
-    let question = Object.assign({}, rebuild.questions[0]);
-    question.type = 'AAAA';
-
-    last = Object.assign({}, results[2]);
-    last.questions = [question];
-
-    last.answers = rebuild.answers.map(item => {
-      let o = Object.assign({}, item); 
-      if (o.type == 'A') {
-	o.type = 'AAAA';
-	o.data = NAT64_PREFIX + o.data;
-      }
-      return o;
-    });
-
-    return last;
-  }
-
-  if (oiling || results[3].answers.some(item => item.type == 'AAAA' && lookup6(item.data)))
+  if (oiling) 
     return AsiaWrap(results[3]);
 
-  return results[1];
-}
+  if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
+    return results[1];
 
-function checkNat64(name) {
-  const key = name.toLowerCase();
+  if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
+    return last;
 
-  if (key == "mtalk.google.com") return false;
-  if (key == "www.gstatic.com") return false;
-  if (key == "www.googleapis.cn") return false;
-  if (key == "connectivitycheck.gstatic.com") return false;
+  if (results[3].answers.some(item => item.type == 'AAAA'))
+    return AsiaWrap(results[3]);
 
-  return !(key.includes(".cootail.com") || key.includes("603030.xyz") || key.includes("cachefiles.net"));
+  return AsiaWrap(results[1]);
 }
 
 function filterIpv4(results, useNat64, oiling) {
