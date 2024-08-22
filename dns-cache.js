@@ -41,73 +41,20 @@ function dnsCache(server, port) {
   this.old_new_stamp = new Date().getTime();
   this.getSession = getSession;
 
-  this.FAR_PORT = port;
-  this.FAR_SERVER = server;
+  this.dnsPort = port;
+  this.dnsServer = server;
   this.dnsParse = dnsParse;
   this.dnsBuild = dnsBuild;
 
   return this;
 }
 
-function checkNat64(name) {
-  const key = name.toLowerCase();
-  const Domains = ["mtalk.google.com", "www.gstatic.com", "www.googleapis.cn", "connectivitycheck.gstatic.com"];
+const oilingCache = new dnsCache("2001:dc7::1", 53);
+const primaryCache = new dnsCache("::ffff:180.76.76.76", 53);
+const primaryCache6 = new dnsCache("2400:7fc0:849e:200::4", 53);
 
-  if (Domains.some(item => item == key))
-    return false;
-
-  return !(key.includes(".cootail.com") || key.includes("603030.xyz") || key.includes("cachefiles.net"));
-}
-
-function makeDnsCache64(cache) {
-  let dore = {};
-
-  dore.cache = cache;
-  dore.getSession = name => cache.getSession(name);
-  dore.FAR_PORT = cache.FAR_PORT;
-  dore.FAR_SERVER = cache.FAR_SERVER;
-
-  dore.dnsParse = data => {
-    let origin = dnsParse(data);
-    let question = Object.assign({}, origin.questions[0]);
-    question.type = 'AAAA';
-
-    if (!checkNat64(question.name)) return origin;
-
-    let message = Object.assign({}, origin);
-    message.questions = [question];
-
-    message.answers = origin.answers.map(item => {
-      let o = Object.assign({}, item); 
-      if (o.type == 'A') {
-	o.type = 'AAAA';
-	o.data = NAT64_PREFIX + o.data;
-      }
-      return o;
-    });
-
-    return message;
-  };
-
-  dore.dnsBuild = message => {
-    let question = Object.assign({}, message.questions[0]);
-    if (checkNat64(question.name))
-      question.type = 'A';
-
-    let dataview = Object.assign({}, message);
-    dataview.questions = [question];
-
-    return dnsBuild(dataview);
-  };
-
-  return dore;
-}
-
-const oilingCache = new dnsCache("::ffff:202.12.30.131", 53);
-const primaryCache = new dnsCache("::ffff:192.168.1.1", 53);
-const primaryCache6 = new dnsCache("2001:4860:4860::8888", 53);
-const secondaryCache = new dnsCache("64:ff9b::101:101", 53);
-const secondaryCache6 = makeDnsCache64(secondaryCache);
+const secondaryCache = new dnsCache("::ffff:808:808", 53);
+const secondaryCache6 = new dnsCache("::ffff:808:808", 53);
 
 function dnsQueryInternal(cache, message) {
   let name = message.questions[0].name;
@@ -115,13 +62,8 @@ function dnsQueryInternal(cache, message) {
 
   let session = cache.getSession(name);
 
-  if (session[type]) {
-    let result = Object.assign({}, session[type]);
-    result.id = message.id;
-    result.questions = message.questions;
-    LOG_ERROR(`fetch from cache ${name}`);
-    return Promise.resolve(result);
-  }
+  if (session[type])
+    return Promise.resolve(session[type]);
 
   const udp6 = dgram.createSocket('udp6');
 
@@ -144,7 +86,7 @@ function dnsQueryInternal(cache, message) {
     const oil_msg = cache.dnsBuild(message);
 
     udp6.on("message", on_message.bind(udp6));
-    const cb = i => udp6.send(oil_msg, c.FAR_PORT, c.FAR_SERVER, LOG_DEBUG);
+    const cb = i => udp6.send(oil_msg, c.dnsPort, c.dnsServer, LOG_DEBUG);
 
     timer = setTimeout(cb, 800);
     cb();
@@ -158,7 +100,7 @@ const NAT64_PREFIX = "64:ff9b::";
 function dnsCheckOilingChina(message) {
    const checking = dnsQueryInternal(oilingCache, message);
    return checking.then(msg => msg.rcode != "REFUSED");
- }
+}
 
 function dnsCheckOilingGlobal(message) {
   let message4 = Object.assign({}, message);
@@ -172,44 +114,103 @@ function dnsCheckOilingGlobal(message) {
   return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
 }
 
-const dnsCheckOiling = dnsCheckOilingChina;
+const dnsCheckOiling = dnsCheckOilingGlobal;
+
+function makeDnsMessage(name, type) {
+
+  const dns0 = {
+    questions: [
+      {name, type}
+    ],
+    answers: [
+    ]
+  };
+
+  return dns0;
+}
+
+function preloadResource(name, type, origin) {
+  const dns = makeDnsMessage(name, type);
+
+  dns.questions[0].name = name;
+  dns.questions[0].type = type;
+
+  if (name == 'mtalk.google.com' && type == 'AAAA') {
+    const answer0 = {
+      name: name,
+      type: type,
+      data: '2404:6800:4008:c1b::bc'
+    };
+    dns.answers.push(answer0);
+    return dns;
+  }
+
+  const domainSuffix = [".cootail.com", "603030.xyz", "cachefiles.net"];
+  const domainList = ["mtalk.google.com", "www.gstatic.com", "www.googleapis.cn", "connectivitycheck.gstatic.com"];
+
+  if (domainSuffix.some(domain => name.includes(domain)))
+    return dnsQueryInternal(primaryCache, origin);
+
+  if (domainList.some(domain => name == domain))
+    return dnsQueryInternal(primaryCache, origin);
+
+  return undefined;
+}
 
 function AsiaWrap(message) {
-    if (!checkNat64(message.questions[0].name)) return message;
 
-    let question = Object.assign({}, message.questions[0]);
-    question.type = 'AAAA';
+  let question = Object.assign({}, message.questions[0]);
+  question.type = 'AAAA';
 
-    let last = Object.assign({}, message);
-    last.questions = [question];
+  let last = Object.assign({}, message);
+  last.questions = [question];
 
-    last.answers = message.answers.map(item => {
-      let o = Object.assign({}, item);
-      if (o.type == 'AAAA') {
-       const parts = o.data.split(':');
-       if (parts.length > 0 && parts[0].length > 0) {
-         const prefix = parseInt(parts[0], 16);
-         if ((prefix & 0xfff0) == 0x2400) {
-           o.data = '1' + o.data.slice(1);
-         } else if (prefix  == 0x2001) {
-           o.data = '1' + o.data.slice(1);
-         }
-       }
+  last.answers = message.answers.map(item => {
+    let o = Object.assign({}, item); 
+    if (o.type == 'AAAA') {
+      const parts = o.data.split(':');
+      if (parts.length > 0 && parts[0].length > 0) {
+        const prefix = parseInt(parts[0], 16);
+        if ((prefix & 0xfff0) == 0x2400) {
+          o.data = '1' + o.data.slice(1);
+        } else if (prefix  == 0x2001) {
+          o.data = '1' + o.data.slice(1);
+        }
       }
-      return o;
-    });
+    }
+    return o;
+  });
 
-    return last;
+  return last;
+}
+
+function makeDns64(ipv4msg, ipv6msg, pref64)
+{
+  const upgradev6 = i => {
+	const o = Object.assign({}, i);
+	o.type = 'AAAA';
+	o.data = NAT64_PREFIX + i.data;
+	return o;
+  };
+
+  if (ipv4msg.answers.some(i => i.type == 'A') &&
+	  (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA')))
+	ipv6msg.answers = ipv4msg.answers.map(upgradev6);
+
+  return ipv6msg;
 }
 
 function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
+  results[3] = makeDns64(results[2], results[3], true);
+  results[1] = makeDns64(results[1], results[1], false);
+
   if (oiling) 
     return AsiaWrap(results[3]);
 
-  if (results[1].answers.some(item => item.type == 'AAAA' && !(isNat64 && lookup6(item.data))))
+  if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
     return results[1];
 
   if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
@@ -218,7 +219,7 @@ function filterIpv6(results, isNat64, oiling) {
   if (results[3].answers.some(item => item.type == 'AAAA'))
     return AsiaWrap(results[3]);
 
-  return results[1];
+  return AsiaWrap(results[1]);
 }
 
 function filterIpv4(results, useNat64, oiling) {
@@ -233,6 +234,10 @@ function filterIpv4(results, useNat64, oiling) {
 function dnsQueryImpl(message, useNat64) {
   const type = message.questions[0].type;
   const name = message.questions[0].name;
+
+  const result = preloadResource(name, type, message);
+
+  if (result) return Promise.resolve(result);
 
   if (type === 'A' || type == 'AAAA') {
     let message4 = Object.assign({}, message);
@@ -264,25 +269,38 @@ function dnsQueryImpl(message, useNat64) {
       results[2].answers.map(item => LOG_DEBUG("secondary ipv4=" + JSON.stringify(item)));
       results[3].answers.map(item => LOG_DEBUG("secondary ipv6=" + JSON.stringify(item)));
 
-      LOG_DEBUG(name + " oiling=" + results[4] + " nat64 " + checkNat64(name));
+      LOG_DEBUG("oiling=" + results[4]);
 
-      return filter(results, checkNat64(name), results[4]);
+      return filter(results, false, results[4]);
     });
   }
 
   LOG_DEBUG("QUERY: " + JSON.stringify(message.questions));
   let primary = dnsQueryInternal(primaryCache, message);
   let secondary = dnsQueryInternal(secondaryCache, message);
+
   return Promise.any([secondary, primary]);
 }
 
-const dnsQuery = message => dnsQueryImpl(message, true);
-const dnsQuerySimple = message => dnsQueryImpl(message, false);
+function dnsQuery(message) {
+
+  const normalize = msg => {
+    let last = Object.assign({}, msg);
+    last.questions = message.questions;
+    last.id = message.id;
+    last.type = 'response';
+    return last;
+  };
+
+  return dnsQueryImpl(message, true).then(normalize);
+}
+
+const dnsQuerySimple = dnsQuery;
 
 function dnsQueryECH(message) {
   const type = message.questions[0].type;
   const name = message.questions[0].name;
-  const facingName = "facing.cootail.com";
+  const facingName = "lamp.603030.xyz";
 
   let echMessage = Object.assign({}, message);
   switch (type) {
