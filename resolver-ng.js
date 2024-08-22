@@ -185,6 +185,7 @@ async function onDnsQuery(segment, rinfo) {
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
   } catch (e) {
     LOG_ERROR("UDP FAILURE " + e);
+	  e && LOG_ERROR(e.stack);
   }
 }
 
@@ -206,6 +207,7 @@ async function onDnsQueryEch(segment, rinfo) {
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
   } catch (e) {
     LOG_ERROR("UDP FAILURE " + e);
+	  e && LOG_ERROR(e.stack);
   }
 }
 const udpEch = dgram.createSocket('udp4');

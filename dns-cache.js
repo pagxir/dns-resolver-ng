@@ -114,7 +114,7 @@ function dnsCheckOilingGlobal(message) {
   return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
 }
 
-const dnsCheckOiling = dnsCheckOilingGlobal;
+const dnsCheckOiling = dnsCheckOilingChina;
 
 function makeDnsMessage(name, type) {
 
@@ -197,7 +197,7 @@ function makeDns64(ipv4msg, ipv6msg, pref64)
 
   if (ipv4msg.answers.some(i => i.type == 'A') &&
 	  (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA'))) {
-	const o = Object.assign({}, i);
+	const o = Object.assign({}, ipv6msg);
 	o.answers = ipv4msg.answers.map(upgradev6);
 	return o;
   }
