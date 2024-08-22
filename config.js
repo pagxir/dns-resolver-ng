@@ -1,34 +1,14 @@
-const TcpPortList = [];
+const TcpPortList = [80, 443];
 
-const OuterNameServer = {
-  address: "::ffff:223.5.5.5",
-  port: 53,
-  wrap: false
+const NameServers = {
+  nearby: { address: "::ffff:223.5.5.5", port: 53},
+  nearby6: { address: "2001:4860:4860::8888", port: 53},
+  global: { address: "64:ff9b::1.1.1.1", port: 53},
+  global6: { address: "64:ff9b::8.8.8.8", port: 53},
+  oiling: { address: "::ffff:202.12.30.131", port: 53},
 };
 
-const InnerNameServer = {
-  address: "::ffff:192.168.1.1",
-  port: 53,
-  wrap: false
-};
-
-const FinalNameServer = {
-  address: "::ffff:8.8.8.8",
-  port: 53,
-  wrap: false
-};
-
-const INVALID_PRECEDENCE  = 100;
-const FAILURE_PRECEDENCE  = 99;
-
-const IPV4_INNER_PRECEDENCE = 1;
-const IPV4_OUTER_PRECEDENCE = 3;
-
-const IPV6_INNER_PRECEDENCE = 2;
-const IPV6_OUTER_PRECEDENCE = 90;
-
-const NAT64_INNER_PRECEDENCE = 8;
-const NAT64_OUTER_PRECEDENCE = 3;
+export const oilingMode = "China";
 
 const PresetRecords = [
   // {name: "ipv4only.arpa", type: "AAAA", data: "2002:1769:c6bd:ffff::"},
@@ -57,6 +37,4 @@ const PresetRecords = [
   {name: "www.gstatic.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
 ];
 
-export {TcpPortList, OuterNameServer, InnerNameServer, FinalNameServer, PresetRecords};
-export {INVALID_PRECEDENCE, FAILURE_PRECEDENCE, NAT64_OUTER_PRECEDENCE, NAT64_INNER_PRECEDENCE};
-export {IPV4_INNER_PRECEDENCE, IPV4_OUTER_PRECEDENCE, IPV6_INNER_PRECEDENCE, IPV6_OUTER_PRECEDENCE};
+export {TcpPortList, PresetRecords, NameServers};

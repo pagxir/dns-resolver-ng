@@ -1,6 +1,7 @@
 import dgram from 'dgram';
 import dnspacket from 'dns-packet';
-import {lookup6, lookup4} from './apnic-table-6.js';
+import { NameServers, oilingMode } from './config.js';
+import { lookup6, lookup4 } from './apnic-table-6.js';
 import { LOG_ERROR, LOG_DEBUG } from './dns-utils.js';
 import { dnsParse, dnsBuild, dnsObject } from './dns-utils.js';
 
@@ -49,12 +50,13 @@ function dnsCache(server, port) {
   return this;
 }
 
-const oilingCache = new dnsCache("2001:dc7::1", 53);
-const primaryCache = new dnsCache("::ffff:180.76.76.76", 53);
-const primaryCache6 = new dnsCache("2400:7fc0:849e:200::4", 53);
+const NS = NameServers;
+const oilingCache = new dnsCache(NS.oiling.address, NS.oiling.port);
+const primaryCache = new dnsCache(NS.nearby.address, NS.nearby.port);
+const primaryCache6 = new dnsCache(NS.nearby6.address, NS.nearby6.port);
 
-const secondaryCache = new dnsCache("::ffff:808:808", 53);
-const secondaryCache6 = new dnsCache("::ffff:808:808", 53);
+const secondaryCache = new dnsCache(NS.global.address, NS.global.port);
+const secondaryCache6 = new dnsCache(NS.global6.address, NS.global6.port);
 
 function dnsQueryInternal(cache, message) {
   let name = message.questions[0].name;
@@ -114,7 +116,7 @@ function dnsCheckOilingGlobal(message) {
   return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
 }
 
-const dnsCheckOiling = dnsCheckOilingChina;
+const dnsCheckOiling = oilingMode == "Global"? dnsCheckOilingGlobal: dnsCheckOilingChina;
 
 function makeDnsMessage(name, type) {
 
@@ -187,19 +189,19 @@ function AsiaWrap(message) {
 function makeDns64(ipv4msg, ipv6msg, pref64)
 {
   const upgradev6 = i => {
-	const o = Object.assign({}, i);
-	if (o.type == 'A') {
-	  o.data = NAT64_PREFIX + i.data;
-	  o.type = 'AAAA';
-	}
-	return o;
+    const o = Object.assign({}, i);
+    if (o.type == 'A') {
+      o.data = NAT64_PREFIX + i.data;
+      o.type = 'AAAA';
+    }
+    return o;
   };
 
   if (ipv4msg.answers.some(i => i.type == 'A') &&
-	  (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA'))) {
-	const o = Object.assign({}, ipv6msg);
-	o.answers = ipv4msg.answers.map(upgradev6);
-	return o;
+    (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA'))) {
+    const o = Object.assign({}, ipv6msg);
+    o.answers = ipv4msg.answers.map(upgradev6);
+    return o;
   }
 
   return ipv6msg;
