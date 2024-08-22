@@ -188,14 +188,19 @@ function makeDns64(ipv4msg, ipv6msg, pref64)
 {
   const upgradev6 = i => {
 	const o = Object.assign({}, i);
-	o.type = 'AAAA';
-	o.data = NAT64_PREFIX + i.data;
+	if (o.type == 'A') {
+	  o.data = NAT64_PREFIX + i.data;
+	  o.type = 'AAAA';
+	}
 	return o;
   };
 
   if (ipv4msg.answers.some(i => i.type == 'A') &&
-	  (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA')))
-	ipv6msg.answers = ipv4msg.answers.map(upgradev6);
+	  (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA'))) {
+	const o = Object.assign({}, i);
+	o.answers = ipv4msg.answers.map(upgradev6);
+	return o;
+  }
 
   return ipv6msg;
 }
@@ -205,7 +210,7 @@ function filterIpv6(results, isNat64, oiling) {
   last.answers = [];
 
   results[3] = makeDns64(results[2], results[3], true);
-  results[1] = makeDns64(results[1], results[1], false);
+  // results[1] = makeDns64(results[1], results[1], false);
 
   if (oiling) 
     return AsiaWrap(results[3]);

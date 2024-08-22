@@ -53,12 +53,12 @@ async function onAccept(socket) {
   } else if (args.length > 0 && args[0].length > 0) {
     const prefix = parseInt(args[0], 16);
     if ((prefix & 0xe000) == 0x2000) {
+      TWO = '[' + address + ']';
       PORT = target.port;
-      TWO = address;
     }
   }
 
-  if (isCloudflareIp(TWO)) {
+  if (isCloudflareIp(address)) {
     TWO = "one.cachefiles.net";
     PORT = 40403;
   }
