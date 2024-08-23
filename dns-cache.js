@@ -204,18 +204,17 @@ function makeDns64(ipv4msg, ipv6msg, pref64)
     return o;
   }
 
-  return ipv6msg;
+  return AsiaWrap(ipv6msg);
 }
 
 function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
-  results[3] = makeDns64(results[2], results[3], true);
   // results[1] = makeDns64(results[1], results[1], false);
 
   if (oiling) 
-    return AsiaWrap(results[3]);
+    return makeDns64(results[2], results[3], true);
 
   if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
     return results[1];
@@ -223,10 +222,13 @@ function filterIpv6(results, isNat64, oiling) {
   if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
     return last;
 
+  if (results[2].answers.some(item => item.type == 'A'))
+    return makeDns64(results[2], results[3], true);
+
   if (results[3].answers.some(item => item.type == 'AAAA'))
     return AsiaWrap(results[3]);
 
-  return AsiaWrap(results[1]);
+  return results[1];
 }
 
 function filterIpv4(results, useNat64, oiling) {
