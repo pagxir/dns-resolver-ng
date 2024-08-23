@@ -1,6 +1,6 @@
 import dgram from 'dgram';
 import dnspacket from 'dns-packet';
-import { NameServers, oilingMode } from './config.js';
+import { NameServers, Config } from './config.js';
 import { lookup6, lookup4 } from './apnic-table-6.js';
 import { LOG_ERROR, LOG_DEBUG } from './dns-utils.js';
 import { dnsParse, dnsBuild, dnsObject } from './dns-utils.js';
@@ -71,6 +71,7 @@ function dnsQueryInternal(cache, message) {
 
   const cb = (resolv, reject) => {
     let timer = null;
+    let time1 = null;
     let timerReject = setTimeout(reject, 3000);
 
     const on_message = (data, rinfo) => {
@@ -80,6 +81,7 @@ function dnsQueryInternal(cache, message) {
 
       session[type] = result;
       clearTimeout(timerReject);
+      clearTimeout(time1);
       clearTimeout(timer);
       fire(result);
     };
@@ -90,6 +92,7 @@ function dnsQueryInternal(cache, message) {
     udp6.on("message", on_message.bind(udp6));
     const cb = i => udp6.send(oil_msg, c.dnsPort, c.dnsServer, LOG_DEBUG);
 
+    time1 = setTimeout(cb, 1800);
     timer = setTimeout(cb, 800);
     cb();
   };
@@ -116,7 +119,7 @@ function dnsCheckOilingGlobal(message) {
   return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
 }
 
-const dnsCheckOiling = oilingMode == "Global"? dnsCheckOilingGlobal: dnsCheckOilingChina;
+const dnsCheckOiling = Config.oilingMode == "Global"? dnsCheckOilingGlobal: dnsCheckOilingChina;
 
 function makeDnsMessage(name, type) {
 
@@ -186,8 +189,7 @@ function AsiaWrap(message) {
   return last;
 }
 
-function makeDns64(ipv4msg, ipv6msg, pref64)
-{
+function makeDns64(ipv4msg, ipv6msg, pref64) {
   const upgradev6 = i => {
     const o = Object.assign({}, i);
     if (o.type == 'A') {
@@ -207,23 +209,72 @@ function makeDns64(ipv4msg, ipv6msg, pref64)
   return AsiaWrap(ipv6msg);
 }
 
+function parseInet(ip) {
+  const sub = ip.split(".");
+
+  if (sub.length < 4) {
+    return 0x0 >>> 0;
+  }
+
+  const b0 = parseInt(sub[0]);
+  const b1 = parseInt(sub[1]);
+  const b2 = parseInt(sub[2]);
+  const b3 = parseInt(sub[3]);
+
+  const val = (b0 << 24)| (b1 << 16) | (b2 << 8) | b3;
+
+  return val >>> 0;
+}
+
+function ipMask(ip, pfxln) {
+  const retval = ip & ~(0xffffffff >>> pfxln);
+  return retval >>> 0;
+}
+
+function china4Lookup(item) {
+
+  const invalidNets = [
+/*
+    {pfx: "0.0.0.0", pfxln: 8},
+    {pfx: "10.0.0.0", pfxln: 8},
+    {pfx: "127.0.0.0", pfxln: 8},
+    {pfx: "192.168.0.0", pfxln: 16},
+    {pfx: "172.16.0.0", pfxln: 12},
+    {pfx: "100.64.0.0", pfxln: 10},
+*/
+    {pfx: "169.254.0.0", pfxln: 16},
+    {pfx: "192.0.0.0", pfxln: 24},
+    {pfx: "192.0.2.0", pfxln: 24},
+    {pfx: "198.18.2.0", pfxln: 15},
+    {pfx: "198.51.100.0", pfxln: 24},
+    {pfx: "203.0.113.0", pfxln: 24}
+  ];
+
+  const ip = parseInet(item);
+
+  if (invalidNets.some(net => parseInet(net.pfx) === ipMask(ip, net.pfxln)))
+    return false;
+
+  return !lookup4(item);
+}
+
 function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
-  // results[1] = makeDns64(results[1], results[1], false);
+  // results[1] = makeDns64(results[0], results[1], false);
 
   if (oiling) 
-    return makeDns64(results[2], results[3], true);
+    return makeDns64(results[2], results[3], Config.preferNat64);
 
   if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
     return results[1];
 
-  if (results[0].answers.some(item => item.type == 'A' && !lookup4(item.data)))
+  if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
     return last;
 
   if (results[2].answers.some(item => item.type == 'A'))
-    return makeDns64(results[2], results[3], true);
+    return makeDns64(results[2], results[3], Config.preferNat64);
 
   if (results[3].answers.some(item => item.type == 'AAAA'))
     return AsiaWrap(results[3]);

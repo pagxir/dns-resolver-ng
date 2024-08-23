@@ -8,7 +8,9 @@ const NameServers = {
   oiling: { address: "::ffff:202.12.30.131", port: 53},
 };
 
-export const oilingMode = "China";
+const Config = {};
+Config.oilingMode = "China";
+Config.preferNat64 = true;
 
 const PresetRecords = [
   // {name: "ipv4only.arpa", type: "AAAA", data: "2002:1769:c6bd:ffff::"},
@@ -37,4 +39,4 @@ const PresetRecords = [
   {name: "www.gstatic.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
 ];
 
-export {TcpPortList, PresetRecords, NameServers};
+export {TcpPortList, PresetRecords, NameServers, Config};
