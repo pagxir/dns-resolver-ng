@@ -330,6 +330,8 @@ function dnsQueryECH(message) {
   let formatCb = result => {
     let o = Object.assign({}, result); 
 
+    o.id = message.id;
+    o.type = 'response';
     o.questions = message.questions;
     o.answers = result.answers.map(item => {
       let v = Object.assign({}, item);
