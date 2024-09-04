@@ -258,6 +258,21 @@ function china4Lookup(item) {
   return !lookup4(item);
 }
 
+function china6Lookup(item) {
+  const args = item.split(":");
+
+  if (args.length > 0 && args[0].length > 0) {
+    const prefix = parseInt(args[0], 16);
+    if ((prefix & 0xfff0) == 0x2400) {
+    } else if (prefix  == 0x2001) {
+    } else {
+      return false;
+    }
+  }
+
+  return !lookup6(item);
+}
+
 function filterIpv6(results, isNat64, oiling) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
@@ -267,7 +282,7 @@ function filterIpv6(results, isNat64, oiling) {
   if (oiling) 
     return makeDns64(results[2], results[3], Config.preferNat64);
 
-  if (results[1].answers.some(item => item.type == 'AAAA' && !lookup6(item.data)))
+  if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
     return results[1];
 
   if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
