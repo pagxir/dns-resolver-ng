@@ -61,15 +61,18 @@ function checkValidate(records, alias, type) {
   return false;
 }
 
-const LOCK = {};
-
 function dnsServerLock(server, LOCK) {
+
   if (!LOCK[server]) {
     LOCK[server] = true;
     return true;
   }
 
   return false;
+}
+
+function dnsServerUnlock(server, pool) {
+   delete pool[server];
 }
 
 function dnsServerCheck(server, pool) {
@@ -85,7 +88,17 @@ function makeQuery(name, type) {
       type: 'A',
       name: 'google.com'
     }],
-    answers: []
+    answers: [],
+    additionals: [{
+      name: ".",
+      type: "OPT",
+      udpPayloadSize: 1232,
+      extendedRcode: 0,
+      ednsVersion: 0,
+      flags: 0,
+      flag_do: false,
+      options:[]
+    }]
   };
 
   dnsObjectZero.questions[0].name = name;
@@ -94,7 +107,7 @@ function makeQuery(name, type) {
   return dnsObjectZero;
 }
 
-async function dnsNetworkUpdate(alias, type, results) {
+async function dnsNetworkUpdate(alias, type, results, pool) {
 
   const message = makeQuery(alias, type);
 
@@ -115,6 +128,10 @@ async function dnsNetworkUpdate(alias, type, results) {
 
     if (result.additionals)
       result.additionals.forEach(updateCache);
+
+    if (result.flag_aa) {
+      pool.authorized = result;
+    };
 
     if (temp.length) {
       const arrayNew = GLOBALCACHE.filter(item => !temp.some(it => it.name == item.name && it.type == item.type));
@@ -209,7 +226,25 @@ function dnsCacheLookup(name, type) {
   return records;
 }
 
-async function dnsFullQuery(name, type, pool) {
+const lockGlobal = {}
+
+const globalContext = {}
+function registerGlobalCallback(context) {
+  globalContext[context] = context;
+}
+
+function notifiyGlobalCallback(data) {
+  Object.entries(globalContext).forEach((key, context) => {
+    LOG_DEBUG("notifiyGlobalCallback " + data);
+    context.resolv(data);
+  });
+}
+
+function unregisterGlobalCallback(context) {
+  delete globalContext[context];
+}
+
+async function dnsFullQuery(name, type, pool, request) {
   let alias = name;
 
   for ( ; ; ) {
@@ -219,12 +254,17 @@ async function dnsFullQuery(name, type, pool) {
       return dnsCacheLookup(name, type);
     }
 
+    const old = alias;
     alias = getDnsAlias(records, alias);
+    if (request.authorized && old == alias) {
+      return dnsCacheLookup(name, type);
+    }
 
     let results = await dnsServerLookup(alias);
+    delete pool.authorized;
 
-    LOG_DEBUG("alias " + alias);
-    LOG_DEBUG("results " + results);
+    LOG_DEBUG("dnsFullQuery alias " + alias);
+    LOG_DEBUG("dnsFullQuery results " + results);
     if (results && results.length) {
       let updated = false;
       const offset = getRandomInt(results.length);
@@ -237,27 +277,60 @@ async function dnsFullQuery(name, type, pool) {
         const results0 = dnsCacheLookup(server, 'A');
 
         if (checkValidate(results0, server, 'A') && dnsServerLock(alias + server, pool)) {
-          updated = await dnsNetworkUpdate(alias, type, results0);
+          updated = await dnsNetworkUpdate(alias, type, results0, request);
+	  if (updated && pool === lockGlobal)
+	    notifiyGlobalCallback(name);
           if (updated) break;
         }
       }
 
       if (updated) continue;
 
+      const context = {};
+      context.birthtime = new Date();
+      const promise = new Promise((resolv, reject) => {
+	context.resolv = resolv;
+	context.reject = reject;
+      });
+
+      LOG_DEBUG("dnsFullQuery start network lookup " + alias);
       for (let index = 0; index < results.length; index++) {
         const refer = (index + offset) % results.length;
         const server = results[refer];
 
-	if (!dnsServerCheck(alias + server, pool)) {
-	  const results0 = await dnsFullQuery(server, 'A', {});
+	if (dnsServerCheck(alias + server, pool)) {
+	  continue;
+	}
+
+        LOG_DEBUG("dnsFullQuery network lookup " + server);
+	if (dnsServerLock(server, lockGlobal)) {
+	  delete lockGlobal.authorized;
+	  const results0 = await dnsFullQuery(server, 'A', lockGlobal, {});
+	  dnsServerUnlock(server, lockGlobal);
+        LOG_DEBUG("dnsFullQuery network return " + results0);
 	  updated = results0.length > 0;
+          if (updated) break;
+	} else if (!context.waiting) {
+	  registerGlobalCallback(context);
+	  context.waiting = true;
 	}
       }
 
-      if (updated) continue;
+      if (updated) {
+	if (context.waiting)
+	  unregisterGlobalCallback(context);
+	continue;
+      }
+
+      if (context.waiting) {
+	await promise;
+	unregisterGlobalCallback(context);
+	continue;
+      }
     }
 
-    LOG_DEBUG("failure ");
+    Object.entries(pool).forEach((key, context) => LOG_DEBUG("FAILURE Lookup " + key));
+    LOG_DEBUG("failure lookup");
     return dnsCacheLookup(name, type);
   }
 }
@@ -269,10 +342,15 @@ async function onDnsQuery(segment, rinfo) {
     const query = dnsParse(segment);
     const name = query.questions[0].name;
     const type = query.questions[0].type;
+    const context = {};
 
-    const result = await dnsFullQuery(name, type, {});
+	  LOG_DEBUG("query: " + JSON.stringify(query));
+
+    const result = await dnsFullQuery(name, type, context, context);
     query.answers = result;
     query.type = "response";
+    if (context.authorized)
+	query.flags = context.authorized.flags;
     let out_segment = dnsBuild(query);
 
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
