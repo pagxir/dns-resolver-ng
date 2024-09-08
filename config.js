@@ -39,4 +39,6 @@ const PresetRecords = [
   {name: "www.gstatic.com", type: "AAAA", data: "2404:6800:4008:c00::bc"},
 ];
 
-export {TcpPortList, PresetRecords, NameServers, Config};
+Config.PresetRecords = PresetRecords;
+
+export {TcpPortList, NameServers, Config};

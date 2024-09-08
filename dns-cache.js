@@ -140,23 +140,24 @@ function preloadResource(name, type, origin) {
   dns.questions[0].name = name;
   dns.questions[0].type = type;
 
-  if (name == 'mtalk.google.com' && type == 'AAAA') {
-    const answer0 = {
-      name: name,
-      type: type,
-      data: '2404:6800:4008:c1b::bc'
-    };
-    dns.answers.push(answer0);
-    return dns;
-  }
+  let suffixMatch = false;
 
-  const domainSuffix = [".cootail.com", "603030.xyz", "cachefiles.net"];
-  const domainList = ["mtalk.google.com", "www.gstatic.com", "www.googleapis.cn", "connectivitycheck.gstatic.com"];
+  const loadItem = item => {
+    if (item.name == name && item.type == type) {
+      dns.answers.push(item);
+    } else if (item.type == "is" && name == item.name) {
+      suffixMatch = true;
+    } else if (item.type == "suffix" &&
+      (name.includes(item.name) || name == item.name)) {
+      suffixMatch = true;
+    }
+  };
 
-  if (domainSuffix.some(domain => name.includes(domain)))
-    return dnsQueryInternal(primaryCache, origin);
+  Config.PresetRecords.forEach(loadItem);
+  if (dns.answers.length > 0)
+    return Promise.resolve(dns);
 
-  if (domainList.some(domain => name == domain))
+  if (suffixMatch)
     return dnsQueryInternal(primaryCache, origin);
 
   return undefined;
@@ -310,9 +311,9 @@ function dnsQueryImpl(message, useNat64) {
   const type = message.questions[0].type;
   const name = message.questions[0].name;
 
-  const result = preloadResource(name, type, message);
+  const promise = preloadResource(name, type, message);
 
-  if (result) return Promise.resolve(result);
+  if (promise) return promise;
 
   if (type === 'A' || type == 'AAAA') {
     let message4 = Object.assign({}, message);
