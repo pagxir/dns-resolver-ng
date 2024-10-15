@@ -111,7 +111,7 @@ function dnsCheckOilingGlobal(message) {
   let message4 = Object.assign({}, message);
   let question4 = Object.assign({}, message.questions[0]);
 
-  question4.name = question4.name + ".oil.cootail.com";
+  question4.name = question4.name + ".oil.603030.xyz";
   question4.type = 'A';
   message4.questions = [question4];
 

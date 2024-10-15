@@ -68,13 +68,17 @@ async function processHttpDns(req, res) {
 
   if (path.startsWith("/dns-query") && req.method === "GET") {
     if (path.includes("?")) {
-      const pairs = querystring.parse(path.split("?")[1]);
-      const fragment = Buffer.from(pairs.dns, 'base64');
+      try {
+	const pairs = querystring.parse(path.split("?")[1]);
+	const fragment = Buffer.from(pairs.dns, 'base64');
 
-      LOG_DEBUG("query finish");
-      const out_segment = await httpEchQuery(fragment);
-      dns_cb(out_segment);
-      return;
+	LOG_DEBUG("query finish");
+	const out_segment = await httpEchQuery(fragment);
+	dns_cb(out_segment);
+	return;
+      } catch (e) {
+	LOG_DEBUG("query failure");
+      }
     }
 
     res.statusCode = 403;
@@ -92,13 +96,26 @@ async function processHttpDns(req, res) {
 
   if (path.startsWith("/dns-query") && req.method === "POST") {
 
-    const buffers = [];
-    for await (const data of req)
-      buffers.push(data);
+    try {
+      const buffers = [];
+      for await (const data of req)
+	buffers.push(data);
 
-    const fragment = Buffer.concat(buffers);
-    const out_segment = await httpEchQuery(fragment);
-    dns_cb(out_segment);
+      const fragment = Buffer.concat(buffers);
+      const out_segment = await httpEchQuery(fragment);
+      dns_cb(out_segment);
+    } catch (e) {
+      res.statusCode = 403;
+
+      res.setHeader("Server", "cloudflare");
+      res.setHeader("Date", new Date());
+      res.setHeader("Content-Type", "application/dns-message");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.setHeader("Content-Length", 0);
+
+      res.end();
+    }
     return;
   }
 
