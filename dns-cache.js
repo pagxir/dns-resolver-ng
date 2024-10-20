@@ -58,6 +58,12 @@ const primaryCache6 = new dnsCache(NS.nearby6.address, NS.nearby6.port);
 const secondaryCache = new dnsCache(NS.global.address, NS.global.port);
 const secondaryCache6 = new dnsCache(NS.global6.address, NS.global6.port);
 
+Promise.any = function promiseAny(promises) {
+  return new Promise((resolv, reject) => {
+      promises.forEach(item => item.then(resolv, reject));
+  });
+}
+
 function dnsQueryInternal(cache, message) {
   let name = message.questions[0].name;
   let type = message.questions[0].type;
@@ -274,14 +280,14 @@ function china6Lookup(item) {
   return !lookup6(item);
 }
 
-function filterIpv6(results, isNat64, oiling) {
+function filterIpv6(results, isNat64, oiling, preferNat64) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
   // results[1] = makeDns64(results[0], results[1], false);
 
   if (oiling) 
-    return makeDns64(results[2], results[3], Config.preferNat64);
+    return makeDns64(results[2], results[3], preferNat64);
 
   if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
     return results[1];
@@ -290,7 +296,7 @@ function filterIpv6(results, isNat64, oiling) {
     return last;
 
   if (results[2].answers.some(item => item.type == 'A'))
-    return makeDns64(results[2], results[3], Config.preferNat64);
+    return makeDns64(results[2], results[3], preferNat64);
 
   if (results[3].answers.some(item => item.type == 'AAAA'))
     return AsiaWrap(results[3]);
@@ -347,7 +353,7 @@ function dnsQueryImpl(message, useNat64) {
 
       LOG_DEBUG("oiling=" + results[4]);
 
-      return filter(results, false, results[4]);
+      return filter(results, false, results[4], useNat64);
     });
   }
 
@@ -368,10 +374,21 @@ function dnsQuery(message) {
     return last;
   };
 
-  return dnsQueryImpl(message, true).then(normalize);
+  return dnsQueryImpl(message, Config.preferNat64).then(normalize);
 }
 
-const dnsQuerySimple = dnsQuery;
+function dnsQuerySimple(message) {
+
+  const normalize = msg => {
+    let last = Object.assign({}, msg);
+    last.questions = message.questions;
+    last.id = message.id;
+    last.type = 'response';
+    return last;
+  };
+
+  return dnsQueryImpl(message, false).then(normalize);
+}
 
 function dnsQueryECH(message) {
   const type = message.questions[0].type;

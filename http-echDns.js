@@ -9,10 +9,18 @@ import { dnsQuery, dnsQuerySimple, dnsQueryECH } from './dns-cache.js';
 import { isGoogleIp, isCloudflareIp } from './apnic-table-6.js';
 
 function isGoogleDomain(fqdn, answsers) {
+    // return false;
+    if (fqdn.endsWith("v2ex.com")) return true;
     return answsers.some(item => (item.type == "A" || item.type == "AAAA") && isGoogleIp(item.data));
 }
 
-async function httpEchQuery(fragment) {
+function isCloudflareDomain(fqdn, answsers) {
+    // return false;
+    if (fqdn.endsWith("v2ex.com")) return true;
+    return answsers.some(item => (item.type == "A" || item.type == "AAAA") && isCloudflareIp(item.data));
+}
+
+async function httpEchQuery(fragment, enableEch, enableDns64) {
   let result = null;
   const query = dnsParse(fragment);
   const type  = query.questions[0].type;
@@ -24,25 +32,61 @@ async function httpEchQuery(fragment) {
       const checker = Object.assign({}, query);
       checker.questions = [Object.assign({}, query.questions[0])];
       checker.questions[0].type = 'A';
-      result = await dnsQuerySimple(checker);
+      result = await dnsQuerySimple(checker, false);
 
-      if (isGoogleDomain("", result.answers)) {
-        result = await dnsQueryECH(query);
-        break;
+      if (!enableEch) {
+
+	let isCloudflare = isCloudflareDomain(checker.questions[0].name, result.answers);
+	if (!isCloudflare) {
+	  checker.questions[0].type = 'AAAA';
+	  result = await dnsQuerySimple(checker, false);
+	  isCloudflare = isCloudflareDomain(checker.questions[0].name, result.answers);
+	}
+
+	if (!isCloudflare) {
+          LOG_DEBUG("no cloudflare name=" + checker.questions[0].name);
+	  result = await dnsQuerySimple(query, enableDns64);
+	  break;
+	}
+
+	result  = Object.assign({}, query);
+	result.type = "response";
+
+	let data = [];
+	switch (result.questions[0].type) {
+	  case 'AAAA':
+	    data.push({name: result.questions[0].name, type: 'AAAA', ttl: 3600, data: "64:ff9b::198.23.236.232"});
+	    break;
+
+	  case 'A':
+	    data.push({name: result.questions[0].name, type: 'A', ttl: 3600, data: "198.23.236.232"});
+	    break;
+
+	  default:
+	    break;
+	}
+        LOG_DEBUG("YES cloudflare name=" + checker.questions[0].name);
+	result.answers = data;
+	break;
+      }
+
+      if (isGoogleDomain(checker.questions[0].name, result.answers)) {
+	result = await dnsQueryECH(query);
+	break;
       }
 
       checker.questions[0].type = 'AAAA';
-      result = await dnsQuerySimple(checker);
-      if (isGoogleDomain("", result.answers)) {
-        result = await dnsQueryECH(query);
-        break;
+      result = await dnsQuerySimple(checker, false);
+      if (isGoogleDomain(checker.questions[0].name, result.answers)) {
+	result = await dnsQueryECH(query);
+	break;
       }
 
-      result = await dnsQuerySimple(query);
+      result = await dnsQuerySimple(query, enableDns64);
       break;
 
     default:
-      result = await dnsQuerySimple(query);
+      result = await dnsQuery(query);
       break;
   }
 
@@ -66,18 +110,23 @@ async function processHttpDns(req, res) {
     res.end(b);
   };
 
-  if (path.startsWith("/dns-query") && req.method === "GET") {
+  const DOHPathPrefix = ["/ech-query", "/dns64-query", "/dns-query", "/ech64-query"];
+  const useDOH = DOHPathPrefix.some(item => path.startsWith(item));
+  const useECH = path.startsWith("/ech-query") || path.startsWith("/ech64-query");
+  const useDNS64 = path.startsWith("/dns64-query") || path.startsWith("/dns64-query");
+
+  if (useDOH && req.method === "GET") {
     if (path.includes("?")) {
       try {
 	const pairs = querystring.parse(path.split("?")[1]);
 	const fragment = Buffer.from(pairs.dns, 'base64');
 
 	LOG_DEBUG("query finish");
-	const out_segment = await httpEchQuery(fragment);
+        const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
 	dns_cb(out_segment);
 	return;
       } catch (e) {
-	LOG_DEBUG("query failure");
+	LOG_DEBUG("query failure" + e);
       }
     }
 
@@ -94,7 +143,7 @@ async function processHttpDns(req, res) {
     return;
   }
 
-  if (path.startsWith("/dns-query") && req.method === "POST") {
+  if (useDOH && req.method === "POST") {
 
     try {
       const buffers = [];
@@ -102,7 +151,7 @@ async function processHttpDns(req, res) {
 	buffers.push(data);
 
       const fragment = Buffer.concat(buffers);
-      const out_segment = await httpEchQuery(fragment);
+      const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
       dns_cb(out_segment);
     } catch (e) {
       res.statusCode = 403;
