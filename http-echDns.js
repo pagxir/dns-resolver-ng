@@ -97,6 +97,15 @@ async function processHttpDns(req, res) {
   const path = req.url;
   LOG_DEBUG("path=" + path);
 
+  let allowDns = false;
+  const clientAddress = req.socket.remoteAddress;
+  console.log(`Client connected from: ${clientAddress}`);
+  if (clientAddress.startsWith("::ffff:")) {
+    const pone = clientAddress.replace("::ffff:", "");
+    allowDns = isCloudflareIp(pone);
+    console.log(`clientAddress ${pone} ${allowDns}`);
+  };
+
   var dns_cb = b => {
     res.statusCode = 200;
 
@@ -111,7 +120,7 @@ async function processHttpDns(req, res) {
   };
 
   const DOHPathPrefix = ["/ech-query", "/dns64-query", "/dns-query", "/ech64-query"];
-  const useDOH = DOHPathPrefix.some(item => path.startsWith(item));
+  const useDOH = allowDns && DOHPathPrefix.some(item => path.startsWith(item));
   const useECH = path.startsWith("/ech-query") || path.startsWith("/ech64-query");
   const useDNS64 = path.startsWith("/dns64-query") || path.startsWith("/dns64-query");
 
@@ -151,8 +160,14 @@ async function processHttpDns(req, res) {
 	buffers.push(data);
 
       const fragment = Buffer.concat(buffers);
-      const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
-      dns_cb(out_segment);
+      try {
+	const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
+	dns_cb(out_segment);
+      } catch (e1) {
+	const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
+	dns_cb(out_segment);
+      }
+
     } catch (e) {
       res.statusCode = 403;
 
@@ -169,6 +184,7 @@ async function processHttpDns(req, res) {
   }
 
   if (path.startsWith("/notatall/")) {
+
     try {
       let mimeType = "application/octet-stream";
       if (path.endsWith(".html") || path.endsWith(".htm")) {
@@ -190,7 +206,7 @@ async function processHttpDns(req, res) {
         rs.pipe(res);
       }
     } catch(e) {
-      LOG_ERROR('XError:', e.stack);
+      LOG_ERROR('not at all XError:', e.stack);
       res.end();
     }
     return;
@@ -219,7 +235,7 @@ async function processHttpDns(req, res) {
 
   {
     let b = "<html/>"
-    res.statusCode = 200;
+    res.statusCode = 404;
     if (path.startsWith("/generate_204")) {
       res.statusCode = 204;
       b = "";

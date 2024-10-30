@@ -1,7 +1,7 @@
 import dgram from 'dgram';
 import dnspacket from 'dns-packet';
 import { NameServers, Config } from './config.js';
-import { lookup6, lookup4 } from './apnic-table-6.js';
+import { lookup6, lookup4, isCloudflareIp } from './apnic-table-6.js';
 import { LOG_ERROR, LOG_DEBUG } from './dns-utils.js';
 import { dnsParse, dnsBuild, dnsObject } from './dns-utils.js';
 
@@ -78,12 +78,18 @@ function dnsQueryInternal(cache, message) {
   const cb = (resolv, reject) => {
     let timer = null;
     let time1 = null;
-    let timerReject = setTimeout(reject, 3000);
+    let rejectWrap = v => {
+      clearTimeout(timerReject);
+      clearTimeout(time1);
+      clearTimeout(timer);
+      v("timouet:: " + name + "@" + cache.dnsServer);
+    };
+    let timerReject = setTimeout(rejectWrap, 3000, reject);
 
     const on_message = (data, rinfo) => {
       LOG_DEBUG("rinfo " + rinfo.address + " fast " + data.length);
       const result = cache.dnsParse(data);
-      const fire = (result == dnsObject? reject: resolv);
+      const fire = (result == dnsObject? reject.bind("parse FAILURE"): resolv);
 
       session[type] = result;
       clearTimeout(timerReject);
@@ -96,11 +102,11 @@ function dnsQueryInternal(cache, message) {
     const oil_msg = cache.dnsBuild(message);
 
     udp6.on("message", on_message.bind(udp6));
-    const cb = i => udp6.send(oil_msg, c.dnsPort, c.dnsServer, LOG_DEBUG);
+    const cb = (msg) => udp6.send(oil_msg, c.dnsPort, c.dnsServer, c => LOG_ERROR(msg));
 
-    time1 = setTimeout(cb, 1800);
-    timer = setTimeout(cb, 800);
-    cb();
+    time1 = setTimeout(cb, 1800, "LAST");
+    timer = setTimeout(cb, 800, "RETRY");
+    cb("FIRST");
   };
 
   return new Promise(cb).finally(udp6.close.bind(udp6));
@@ -206,7 +212,7 @@ function makeDns64(ipv4msg, ipv6msg, pref64) {
     return o;
   };
 
-  if (ipv4msg.answers.some(i => i.type == 'A') &&
+  if (ipv4msg.answers.some(i => i.type == 'A' && !isCloudflareIp(i.data)) &&
     (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA'))) {
     const o = Object.assign({}, ipv6msg);
     o.answers = ipv4msg.answers.map(upgradev6);
@@ -289,11 +295,11 @@ function filterIpv6(results, isNat64, oiling, preferNat64) {
   if (oiling) 
     return makeDns64(results[2], results[3], preferNat64);
 
-  if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
-    return results[1];
-
   if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
     return last;
+
+  if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
+    return results[1];
 
   if (results[2].answers.some(item => item.type == 'A'))
     return makeDns64(results[2], results[3], preferNat64);
@@ -377,7 +383,7 @@ function dnsQuery(message) {
   return dnsQueryImpl(message, Config.preferNat64).then(normalize);
 }
 
-function dnsQuerySimple(message) {
+function dnsQuerySimple(message, enableDns64) {
 
   const normalize = msg => {
     let last = Object.assign({}, msg);
@@ -387,7 +393,7 @@ function dnsQuerySimple(message) {
     return last;
   };
 
-  return dnsQueryImpl(message, false).then(normalize);
+  return dnsQueryImpl(message, enableDns64).then(normalize);
 }
 
 function dnsQueryECH(message) {
