@@ -292,8 +292,13 @@ function filterIpv6(results, isNat64, oiling, preferNat64) {
 
   // results[1] = makeDns64(results[0], results[1], false);
 
-  if (oiling) 
-    return makeDns64(results[2], results[3], preferNat64);
+  if (oiling) {
+    results[0] = results[1];
+    results[1] = results[3];
+  }
+
+  if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
+    return results[1];
 
   if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
     return last;
