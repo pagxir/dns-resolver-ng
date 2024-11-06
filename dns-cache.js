@@ -202,6 +202,9 @@ function AsiaWrap(message) {
   return last;
 }
 
+const _AsiaWrap = Config.asiaWrap? AsiaWrap: v => v;
+const _isDns64Allowed = Config.dns64ofCloudflare? v => true: v => !isCloudflareIp(v);
+
 function makeDns64(ipv4msg, ipv6msg, pref64) {
   const upgradev6 = i => {
     const o = Object.assign({}, i);
@@ -212,14 +215,14 @@ function makeDns64(ipv4msg, ipv6msg, pref64) {
     return o;
   };
 
-  if (ipv4msg.answers.some(i => i.type == 'A' && !isCloudflareIp(i.data)) &&
+  if (ipv4msg.answers.some(i => i.type == 'A' && _isDns64Allowed(i.data)) &&
     (pref64 || !ipv6msg.answers.some(i => i.type == 'AAAA'))) {
     const o = Object.assign({}, ipv6msg);
     o.answers = ipv4msg.answers.map(upgradev6);
     return o;
   }
 
-  return AsiaWrap(ipv6msg);
+  return _AsiaWrap(ipv6msg);
 }
 
 function parseInet(ip) {
@@ -310,7 +313,7 @@ function filterIpv6(results, isNat64, oiling, preferNat64) {
     return makeDns64(results[2], results[3], preferNat64);
 
   if (results[3].answers.some(item => item.type == 'AAAA'))
-    return AsiaWrap(results[3]);
+    return _AsiaWrap(results[3]);
 
   return results[1];
 }

@@ -12,6 +12,9 @@ const Config = {};
 Config.oilingMode = "China";
 Config.preferNat64 = true;
 
+Config.asiaWrap = false;
+Config.dns64ofCloudflare = false;
+
 const PresetRecords = [
   // {name: "ipv4only.arpa", type: "AAAA", data: "2002:1769:c6bd:ffff::"},
   {name: "www.googleapis.cn", type: "AAAA", data: "2607:f8b0:4005:814::2003"},
