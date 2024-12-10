@@ -401,17 +401,45 @@ function dnsQuerySimple(message, enableDns64) {
     return last;
   };
 
-  return dnsQueryImpl(message, enableDns64).then(normalize);
+  return dnsQueryInternal(secondaryCache, message).then(normalize);
+  // return dnsQueryImpl(message, enableDns64).then(normalize);
 }
 
-function dnsQueryECH(message) {
+function do_ech_delay(o) {
+    switch (o.questions[0].type) {
+	case 'AAAA':
+	    return new Promise((resolv, reject) => {
+		setTimeout(() => resolv(o), 60);
+	    });
+	    break;
+
+	case 'A':
+	    return new Promise((resolv, reject) => {
+		setTimeout(() => resolv(o), 90);
+	    });
+	    break;
+
+	default:
+	    break;
+    }
+
+    return o;
+}
+
+function dnsQueryECH(message, facing) {
   const type = message.questions[0].type;
   const name = message.questions[0].name;
-  const facingName = "lamp.603030.xyz";
+  const facingName = facing && facing != ""? facing: "lamp.603030.xyz";
 
   let echMessage = Object.assign({}, message);
   switch (type) {
     case 'AAAA':
+      if (facingName == "lamp.603030.xyz")
+	echMessage.questions = [{name: name, type: 'A'}];
+      else
+	echMessage.questions = [{name: name, type: 'AAAA'}];
+      break;
+
     case 'A':
     case 'UNKNOWN_65':
       echMessage.questions = [{name: facingName, type}];
@@ -434,12 +462,24 @@ function dnsQueryECH(message) {
     o.answers = result.answers.map(item => {
       let v = Object.assign({}, item);
       if (v.name == facingName) v.name = name;
+      if (type == 'AAAA' && item.type == 'A') {
+	  v.type = 'AAAA';
+	  v.data = "2001:470:a:594:64:ff9b:" + item.data;
+      }
+      v.name = name;
+      return v;
+    }).filter(item => item.type == type);
+    /*
+    let answers = result.answers.map(item => {
+      let v = Object.assign({}, item);
       return v;
     });
+    o.answers = [{name: name, type: "CNAME", ttl: 3600, "class": "IN", data: facingName}].concat(answers);
+    */
     return o;
   };
 
-  return echSecondary.then(formatCb);
+  return echSecondary.then(formatCb).then(do_ech_delay);
 }
 
 export { dnsQuery, dnsQueryECH, dnsQuerySimple };

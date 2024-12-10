@@ -10,20 +10,24 @@ import { isGoogleIp, isCloudflareIp } from './apnic-table-6.js';
 
 function isGoogleDomain(fqdn, answsers) {
     // return false;
-    if (fqdn.endsWith("v2ex.com")) return true;
+    // if (fqdn.endsWith("v2ex.com")) return true;
+    if (fqdn.endsWith("dropbox.com")) return true;
+    if (fqdn.endsWith("dropboxstatic.com")) return true;
+    // if (fqdn.endsWith("imgur.com")) return true;
     return answsers.some(item => (item.type == "A" || item.type == "AAAA") && isGoogleIp(item.data));
 }
 
 function isCloudflareDomain(fqdn, answsers) {
-    // return false;
-    if (fqdn.endsWith("v2ex.com")) return true;
+    if (fqdn.endsWith("v2ex.com")) return false;
     return answsers.some(item => (item.type == "A" || item.type == "AAAA") && isCloudflareIp(item.data));
 }
 
-async function httpEchQuery(fragment, enableEch, enableDns64) {
+async function httpEchQuery(fragment, enableEch, enableDns64, facing) {
   let result = null;
   const query = dnsParse(fragment);
   const type  = query.questions[0].type;
+  const name  = query.questions[0].name;
+  const startTime = new Date();
 
   switch (type) {
     case 'UNKNOWN_65':
@@ -36,15 +40,15 @@ async function httpEchQuery(fragment, enableEch, enableDns64) {
 
       if (!enableEch) {
 
-	let isCloudflare = isCloudflareDomain(checker.questions[0].name, result.answers);
+	let isCloudflare = isCloudflareDomain(name, result.answers);
 	if (!isCloudflare) {
 	  checker.questions[0].type = 'AAAA';
 	  result = await dnsQuerySimple(checker, false);
-	  isCloudflare = isCloudflareDomain(checker.questions[0].name, result.answers);
+	  isCloudflare = isCloudflareDomain(name, result.answers);
 	}
 
 	if (!isCloudflare) {
-          LOG_DEBUG("no cloudflare name=" + checker.questions[0].name);
+          LOG_DEBUG("no cloudflare name=" + name);
 	  result = await dnsQuerySimple(query, enableDns64);
 	  break;
 	}
@@ -53,32 +57,62 @@ async function httpEchQuery(fragment, enableEch, enableDns64) {
 	result.type = "response";
 
 	let data = [];
-	switch (result.questions[0].type) {
+	switch (type) {
 	  case 'AAAA':
-	    data.push({name: result.questions[0].name, type: 'AAAA', ttl: 3600, data: "64:ff9b::198.23.236.232"});
+	    data.push({name: name, type: 'AAAA', ttl: 3600, data: "64:ff9b::198.23.236.232"});
 	    break;
 
 	  case 'A':
-	    data.push({name: result.questions[0].name, type: 'A', ttl: 3600, data: "198.23.236.232"});
+	    data.push({name: name, type: 'A', ttl: 3600, data: "198.23.236.232"});
 	    break;
 
 	  default:
 	    break;
 	}
-        LOG_DEBUG("YES cloudflare name=" + checker.questions[0].name);
+        LOG_DEBUG("YES cloudflare name=" + name);
 	result.answers = data;
 	break;
       }
 
-      if (isGoogleDomain(checker.questions[0].name, result.answers)) {
-	result = await dnsQueryECH(query);
+      if (isGoogleDomain(name, result.answers)) {
+	result  = Object.assign({}, query);
+	result.type = "response";
+
+	let data = [];
+	switch (type) {
+	  case 'AAAA':
+	    // data.push({name: result.questions[0].name, type: 'AAAA', ttl: 3600, data: "64:ff9b::198.23.236.232"});
+	    break;
+
+	  case 'A':
+	    // data.push({name: result.questions[0].name, type: 'A', ttl: 3600, data: "172.31.1.30"});
+	    break;
+
+	  default:
+	    break;
+	}
+	result.answers = data;
+	result = await dnsQueryECH(query, facing);
+	const endTime = new Date();
+	
+        LOG_DEBUG("YES Google name=" + name + " TYPE: " + type + " use time " + (endTime.getTime() - startTime.getTime() + " count=" + result.answers.length));
+	break;
+      }
+
+      if (isCloudflareDomain(name, result.answers)) {
+	result = await dnsQueryECH(query, facing? facing: "www.v2ex.com");
 	break;
       }
 
       checker.questions[0].type = 'AAAA';
       result = await dnsQuerySimple(checker, false);
-      if (isGoogleDomain(checker.questions[0].name, result.answers)) {
+      if (isGoogleDomain(name, result.answers)) {
 	result = await dnsQueryECH(query);
+	break;
+      }
+
+      if (isCloudflareDomain(name, result.answers)) {
+	result = await dnsQueryECH(query, facing? facing: "www.v2ex.com");
 	break;
       }
 
@@ -125,13 +159,15 @@ async function processHttpDns(req, res) {
   const useDNS64 = path.startsWith("/dns64-query") || path.startsWith("/dns64-query");
 
   if (useDOH && req.method === "GET") {
+    let facing = path.split(/[?/]/)[2];
+    if (path.includes("?" + facing)) facing = "";
     if (path.includes("?")) {
       try {
 	const pairs = querystring.parse(path.split("?")[1]);
 	const fragment = Buffer.from(pairs.dns, 'base64');
 
 	LOG_DEBUG("query finish");
-        const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
+        const out_segment = await httpEchQuery(fragment, useECH, useDNS64, facing);
 	dns_cb(out_segment);
 	return;
       } catch (e) {
@@ -160,11 +196,13 @@ async function processHttpDns(req, res) {
 	buffers.push(data);
 
       const fragment = Buffer.concat(buffers);
+      let facing = path.split(/[?/]/)[2];
+      if (path.includes("?" + facing)) facing = "";
       try {
-	const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
+	const out_segment = await httpEchQuery(fragment, useECH, useDNS64, facing);
 	dns_cb(out_segment);
       } catch (e1) {
-	const out_segment = await httpEchQuery(fragment, useECH, useDNS64);
+	const out_segment = await httpEchQuery(fragment, useECH, useDNS64, facing);
 	dns_cb(out_segment);
       }
 
@@ -178,6 +216,7 @@ async function processHttpDns(req, res) {
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.setHeader("Content-Length", 0);
 
+      LOG_ERROR('DNS FAILURE not at all XError:', e.stack);
       res.end();
     }
     return;
