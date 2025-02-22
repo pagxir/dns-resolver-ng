@@ -64,6 +64,18 @@ Promise.any = function promiseAny(promises) {
   });
 }
 
+function zeroTTL(result) {
+  let msg = Object.assign({}, result);
+  msg.answers = [];
+  result.answers &&
+  result.answers.forEach(it => {
+    let yt = Object.assign({}, it);
+    yt.ttl = 1;
+    msg.answers.push(yt);
+  });
+  return msg;
+}
+
 function dnsQueryInternal(cache, message) {
   let name = message.questions[0].name;
   let type = message.questions[0].type;
@@ -95,7 +107,7 @@ function dnsQueryInternal(cache, message) {
       clearTimeout(timerReject);
       clearTimeout(time1);
       clearTimeout(timer);
-      fire(result);
+      fire(zeroTTL(result));
     };
 
     const c = cache;
@@ -153,20 +165,24 @@ function preloadResource(name, type, origin) {
   dns.questions[0].type = type;
 
   let suffixMatch = false;
+  let recordFound = false;
 
   const loadItem = item => {
     if (item.name == name && item.type == type) {
-      dns.answers.push(item);
+      if (item.data && item.data != "")
+          dns.answers.push(item);
+      recordFound = true;
     } else if (item.type == "is" && name == item.name) {
       suffixMatch = true;
     } else if (item.type == "suffix" &&
       (name.includes(item.name) || name == item.name)) {
+      recordFound = (item.data == "deny");
       suffixMatch = true;
     }
   };
 
   Config.PresetRecords.forEach(loadItem);
-  if (dns.answers.length > 0)
+  if (dns.answers.length > 0 || recordFound)
     return Promise.resolve(dns);
 
   if (suffixMatch)
