@@ -103,7 +103,10 @@ function dnsQueryInternal(cache, message) {
       const result = cache.dnsParse(data);
       const fire = (result == dnsObject? reject.bind("parse FAILURE"): resolv);
 
-      session[type] = result;
+      if (result != dnsObject &&
+	result.rcode == "NOERROR")
+	session[type] = result;
+
       clearTimeout(timerReject);
       clearTimeout(time1);
       clearTimeout(timer);
