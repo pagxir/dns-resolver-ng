@@ -127,6 +127,36 @@ async function httpEchQuery(fragment, enableEch, enableDns64, facing) {
   return dnsBuild(result);
 }
 
+const ALLOW_PATHS = [
+  "/home/level/resolver-ng",
+  "/home/level/media",
+  "/mnt"
+];
+
+function getLocalFileFromHttp(file, offset) {
+
+    let path = file == ""? "404.html": file;
+
+    const localPath = ALLOW_PATHS.map(it => it + "/" + path).
+        find(it => fs.existsSync(it));
+
+    if (!localPath) {
+        return null;
+    }
+
+    const stat = fs.statSync(localPath);
+
+    if (stat.isDirectory()) {
+        return null;
+    }
+
+    const stream = fs.createReadStream(localPath, {start: offset, highWaterMark: 655360});
+    stream.path = localPath;
+    stream.size = stat.size;
+
+    return stream;
+}
+
 async function processHttpDns(req, res) {
   const path = req.url;
   LOG_DEBUG("path=" + path);
@@ -223,27 +253,52 @@ async function processHttpDns(req, res) {
   }
 
   if (path.startsWith("/notatall/")) {
-
     try {
       let mimeType = "application/octet-stream";
       if (path.endsWith(".html") || path.endsWith(".htm")) {
         mimeType = "text/html";
       } else if (path.endsWith(".png")) {
         mimeType = "image/png";
+      } else if (path.endsWith(".jpg")) {
+        mimeType = "image/jpeg";
+      } else if (path.endsWith(".mp4")) {
+        mimeType = "video/mp4";
       } else if (path.endsWith("yaml")) {
         mimeType = "text/yaml";
       }
+      const realpath = decodeURIComponent(path);
 
-      let stat = fs.statSync("./" + path);
-      if (!stat.isDirectory()) {
-        let rs = fs.createReadStream("./" + path, {
-          highWaterMark: 65536
-        })
-        res.setHeader("Content-Type", mimeType);
-        res.setHeader("Content-Length", stat.size);
-        res.statusCode = 200;
-        rs.pipe(res);
+      let offset = 0;
+      let statusCode = 200;
+
+      let ranges = ["0", "1"];
+      let rangestr = req.headers["range"] || "";
+
+      if (rangestr.startsWith("bytes=")) {
+        ranges = rangestr.replace("bytes=", "").split("-");
+        offset = parseInt(ranges[0]);
+        statusCode = 206;
       }
+
+      let localFile = getLocalFileFromHttp(realpath);
+      if (!localFile) {
+        localFile = getLocalFileFromHttp("404.html");
+        statusCode = 404;
+      }
+
+      res.setHeader("Content-Type", mimeType);
+      res.statusCode = statusCode;
+
+      if (statusCode == 206) {
+	var contentRange = "bytes " + ranges[0] + "-" + (localFile.size - 1) + "/" + localFile.size;
+	res.setHeader("Content-Length", localFile.size - offset);
+	res.setHeader("Content-Range", contentRange);
+      } else {
+	res.setHeader("Content-Length", localFile.size);
+      }
+
+      localFile.pipe(res);
+
     } catch(e) {
       LOG_ERROR('not at all XError:', e.stack);
       res.end();

@@ -366,6 +366,7 @@ function dnsQueryImpl(message, useNat64) {
 
     question6.type = 'AAAA';
     message6.questions = [question6];
+    if (type == 'A' && Config.allowAOiling) return dnsQueryInternal(primaryCache, message4);
 
     let oiling6 = dnsCheckOiling(message6);
     let primary4 = dnsQueryInternal(primaryCache, message4);
