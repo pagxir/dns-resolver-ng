@@ -175,6 +175,8 @@ function preloadResource(name, type, origin) {
       if (item.data && item.data != "")
           dns.answers.push(item);
       recordFound = true;
+    } else if (item.type == "alias" && name == item.name) {
+      origin.questions = [{name: item.data, type: type}];
     } else if (item.type == "is" && name == item.name) {
       suffixMatch = true;
     } else if (item.type == "suffix" &&
@@ -346,9 +348,11 @@ function filterIpv4(results, useNat64, oiling) {
   return results[2];
 }
 
-function dnsQueryImpl(message, useNat64) {
-  const type = message.questions[0].type;
-  const name = message.questions[0].name;
+function dnsQueryImpl(message0, useNat64) {
+  const type = message0.questions[0].type;
+  const name = message0.questions[0].name;
+
+  let message = Object.assign({}, message0);
 
   const promise = preloadResource(name, type, message);
 
@@ -372,11 +376,13 @@ function dnsQueryImpl(message, useNat64) {
     let primary4 = dnsQueryInternal(primaryCache, message4);
     let primary6 = dnsQueryInternal(primaryCache6, message6);
 
+    let fastPath = Promise.all([primary4, primary6, oiling6]);
+
     let secondary4 = dnsQueryInternal(secondaryCache, message4);
     let secondary6 = dnsQueryInternal(secondaryCache6, message6);
 
     let all = [primary4, primary6, secondary4, secondary6, oiling6];
-    return Promise.all(all).then(results => {
+    let slowPath = Promise.all(all).then(results => {
       const filter = type == 'AAAA'? filterIpv6: filterIpv4;
 
       results[0].answers.map(item => LOG_DEBUG("  primary ipv4=" + JSON.stringify(item)));
@@ -388,6 +394,26 @@ function dnsQueryImpl(message, useNat64) {
       LOG_DEBUG("oiling=" + results[4]);
 
       return filter(results, false, results[4], useNat64);
+    });
+
+    return fastPath.then(results => {
+      if (results[2]) return slowPath;
+
+      let last = Object.assign({}, results[1]);
+      last.answers = [];
+
+      /*
+      if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
+	return results[1];
+	*/
+
+      if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
+	return last;
+
+      if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
+	return results[1];
+
+      return slowPath;
     });
   }
 
