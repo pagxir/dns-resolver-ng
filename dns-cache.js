@@ -94,7 +94,7 @@ function dnsQueryInternal(cache, message) {
       clearTimeout(timerReject);
       clearTimeout(time1);
       clearTimeout(timer);
-      v("timouet:: " + name + "@" + cache.dnsServer);
+      v("timouet:: " + name + "@" + cache.dnsServer + "/" + type);
     };
     let timerReject = setTimeout(rejectWrap, 3000, reject);
 
@@ -394,7 +394,7 @@ function dnsQueryImpl(message0, useNat64) {
       LOG_DEBUG("oiling=" + results[4]);
 
       return filter(results, false, results[4], useNat64);
-    });
+    }).catch(v => {});
 
     return fastPath.then(results => {
       if (results[2]) return slowPath;
@@ -407,6 +407,10 @@ function dnsQueryImpl(message0, useNat64) {
 	return results[1];
 	*/
 
+	// secondary4.catch(e => {});
+	// secondary6.catch(e => {});
+
+    // slowPath.catch(e => {});
       if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
 	return last;
 
