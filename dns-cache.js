@@ -114,6 +114,8 @@ function dnsQueryInternal(cache, message) {
     };
 
     const c = cache;
+	message.id = Math.floor(Math.random() * 59999);
+	message.additionals = [];
     const oil_msg = cache.dnsBuild(message);
 
     udp6.on("message", on_message.bind(udp6));
@@ -394,9 +396,9 @@ function dnsQueryImpl(message0, useNat64) {
       LOG_DEBUG("oiling=" + results[4]);
 
       return filter(results, false, results[4], useNat64);
-    }).catch(v => {});
+    });
 
-    return fastPath.then(results => {
+    const zfastPath = fastPath.then(results => {
       if (results[2]) return slowPath;
 
       let last = Object.assign({}, results[1]);
@@ -419,6 +421,8 @@ function dnsQueryImpl(message0, useNat64) {
 
       return slowPath;
     });
+
+	return Promise.any([zfastPath, slowPath]);
   }
 
   LOG_DEBUG("QUERY: " + JSON.stringify(message.questions));
