@@ -439,6 +439,11 @@ function dnsQuery(message) {
     last.questions = message.questions;
     last.id = message.id;
     last.type = 'response';
+
+    if (last.answers && last.answers.length > 0
+        && last.answers[0].name != last.questions[0].name)
+      last.answers[0].name = last.questions[0].name;
+
     return last;
   };
 
@@ -452,6 +457,11 @@ function dnsQuerySimple(message, enableDns64) {
     last.questions = message.questions;
     last.id = message.id;
     last.type = 'response';
+
+    if (last.answers && last.answers.length > 0
+        && last.answers[0].name != last.questions[0].name)
+      last.answers[0].name = last.questions[0].name;
+
     return last;
   };
 
