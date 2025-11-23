@@ -9,7 +9,7 @@ import querystring from 'querystring';
 import { httpEchQuery, processHttpDns } from './http-echDns.js';
 import { dnsParse, dnsBuild } from './dns-utils.js';
 import { LOG_ERROR, LOG_DEBUG } from './dns-utils.js';
-import { dnsQuery, dnsQuerySimple, dnsQueryECH } from './dns-cache.js';
+import { dnsQuery, dnsQuerySimple, dnsQueryECH, dnsIsReturnCN } from './dns-cache.js';
 import { lookup6, lookup4, isGoogleIp, isCloudflareIp } from './apnic-table-6.js';
 
 const options = {
@@ -180,7 +180,7 @@ async function onDnsQuery(segment, rinfo) {
   try {
     const query = dnsParse(segment);
     const result = await dnsQuery(query);
-    let out_segment = dnsBuild(result);
+    let out_segment = dnsIsReturnCN(result)? segment: dnsBuild(result);
 
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
   } catch (e) {

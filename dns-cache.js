@@ -133,7 +133,7 @@ const NAT64_PREFIX = "64:ff9b::";
 
 function dnsCheckOilingChina(message) {
    const checking = dnsQueryInternal(oilingCache, message);
-   return checking.then(msg => msg.rcode != "REFUSED");
+   return checking.then(msg => msg.rcode != "REFUSED").catch(e => LOG_ERROR("XXX OILING"));
 }
 
 function dnsCheckOilingGlobal(message) {
@@ -146,6 +146,54 @@ function dnsCheckOilingGlobal(message) {
 
   const checking = dnsQueryInternal(secondaryCache, message4);
   return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
+}
+
+function dnsCheckChinaDomain(message) {
+  let message4 = Object.assign({}, message);
+  let question4 = Object.assign({}, message.questions[0]);
+
+  question4.name = question4.name.split(".").slice(1).join(".");
+  question4.type = 'SOA';
+  message4.questions = [question4];
+
+  const checking = dnsQueryInternal(secondaryCache, message4);
+
+  return checking.then(msg => {
+      let item = msg.authorities && msg.authorities[0];
+
+      if (item && item.type == 'SOA') {
+        let message1 = Object.assign({}, message);
+        let question = Object.assign({}, message.questions[0]);
+
+        question.name = item.data.mname;
+        question.type = 'A';
+        message1.questions = [question];
+
+		LOG_ERROR("domain SOA " + item.data.mname);
+        return dnsQueryInternal(primaryCache, message1).then(
+            msg => (msg.answers && msg.answers.some(item => item.type == 'A' && china4Lookup(item.data)))
+        );
+      }
+
+      item = msg.answers && msg.answers[0];
+
+      if (item && item.type == 'SOA') {
+        let message1 = Object.assign({}, message);
+        let question = Object.assign({}, message.questions[0]);
+
+        question.name = item.data.mname;
+        question.type = 'A';
+        message1.questions = [question];
+
+		LOG_ERROR("domain SOA " + item.data.mname);
+        return dnsQueryInternal(primaryCache, message1).then(
+            msg => (msg.answers && msg.answers.some(item => item.type == 'A' && china4Lookup(item.data)))
+        );
+      }
+
+	  LOG_ERROR("domain return false item=" + JSON.stringify(msg));
+      return false;
+  });
 }
 
 const dnsCheckOiling = Config.oilingMode == "Global"? dnsCheckOilingGlobal: dnsCheckOilingChina;
@@ -312,7 +360,7 @@ function china6Lookup(item) {
   return !lookup6(item);
 }
 
-function filterIpv6(results, isNat64, oiling, preferNat64) {
+function filterIpv6(results, isNat64, oiling, preferNat64, disableNat64) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
@@ -332,7 +380,7 @@ function filterIpv6(results, isNat64, oiling, preferNat64) {
   if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
     return results[1];
 
-  if (results[2].answers.some(item => item.type == 'A'))
+  if (results[2].answers.some(item => item.type == 'A') && !disableNat64)
     return makeDns64(results[2], results[3], preferNat64);
 
   if (results[3].answers.some(item => item.type == 'AAAA'))
@@ -375,6 +423,7 @@ function dnsQueryImpl(message0, useNat64) {
     if (type == 'A' && Config.allowAOiling) return dnsQueryInternal(primaryCache, message4);
 
     let oiling6 = dnsCheckOiling(message6);
+    let cnDomain = dnsCheckChinaDomain(message4);
     let primary4 = dnsQueryInternal(primaryCache, message4);
     let primary6 = dnsQueryInternal(primaryCache6, message6);
 
@@ -383,7 +432,7 @@ function dnsQueryImpl(message0, useNat64) {
     let secondary4 = dnsQueryInternal(secondaryCache, message4);
     let secondary6 = dnsQueryInternal(secondaryCache6, message6);
 
-    let all = [primary4, primary6, secondary4, secondary6, oiling6];
+    let all = [primary4, primary6, secondary4, secondary6, oiling6, cnDomain];
     let slowPath = Promise.all(all).then(results => {
       const filter = type == 'AAAA'? filterIpv6: filterIpv4;
 
@@ -394,8 +443,9 @@ function dnsQueryImpl(message0, useNat64) {
       results[3].answers.map(item => LOG_DEBUG("secondary ipv6=" + JSON.stringify(item)));
 
       LOG_DEBUG("oiling=" + results[4]);
+      LOG_DEBUG("cnDomain=" + results[5]);
 
-      return filter(results, false, results[4], useNat64);
+      return filter(results, false, results[4], useNat64, results[5]);
     });
 
     const zfastPath = fastPath.then(results => {
@@ -546,4 +596,19 @@ function dnsQueryECH(message, facing) {
   return echSecondary.then(formatCb).then(do_ech_delay);
 }
 
-export { dnsQuery, dnsQueryECH, dnsQuerySimple };
+function dnsIsReturnCN(message) {
+
+/*
+    if (message.answers && !dnsCheckOiling(message)) {
+        if (message.answers.some(item => item.type == 'A' && china4Lookup(item.data)))
+            return true;
+
+        if (message.answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
+            return true;
+    }
+*/
+
+    return false;
+}
+
+export { dnsQuery, dnsQueryECH, dnsQuerySimple, dnsIsReturnCN};
