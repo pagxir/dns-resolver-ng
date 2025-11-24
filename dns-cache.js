@@ -596,19 +596,19 @@ function dnsQueryECH(message, facing) {
   return echSecondary.then(formatCb).then(do_ech_delay);
 }
 
+
 function dnsIsReturnCN(message) {
-
-/*
-    if (message.answers && !dnsCheckOiling(message)) {
-        if (message.answers.some(item => item.type == 'A' && china4Lookup(item.data)))
-            return true;
-
-        if (message.answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
-            return true;
+  return dnsCheckOiling(message).then(oil => {
+    if (!oil) {
+      if (!message || message.answers.length == 0)
+        return true;
+      if (message.answers.some(item =>
+        (item.type == 'A' && china4Lookup(item.data)
+          || item.type == 'AAAA' && china6Lookup(item.data))))
+        return true;
     }
-*/
-
     return false;
+  });
 }
 
 export { dnsQuery, dnsQueryECH, dnsQuerySimple, dnsIsReturnCN};

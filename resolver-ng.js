@@ -180,7 +180,23 @@ async function onDnsQuery(segment, rinfo) {
   try {
     const query = dnsParse(segment);
     const result = await dnsQuery(query);
-    let out_segment = dnsIsReturnCN(result)? segment: dnsBuild(result);
+    let out_segment = dnsBuild(result);
+
+    this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
+  } catch (e) {
+    LOG_ERROR("UDP FAILURE " + e);
+	  e && LOG_ERROR(e.stack);
+  }
+}
+
+async function onDnsQueryFallback(segment, rinfo) {
+  LOG_DEBUG("UDP SERVER rinfo " + rinfo.address);
+  let config = {};
+
+  try {
+    const query = dnsParse(segment);
+    const result = await dnsQuery(query);
+    let out_segment = await dnsIsReturnCN(result)? segment: dnsBuild(result);
 
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
   } catch (e) {
