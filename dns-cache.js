@@ -50,6 +50,7 @@ function dnsCache(server, port) {
   return this;
 }
 
+let idgen = 0;
 const NS = NameServers;
 const oilingCache = new dnsCache(NS.oiling.address, NS.oiling.port);
 const primaryCache = new dnsCache(NS.nearby.address, NS.nearby.port);
@@ -137,63 +138,70 @@ function dnsCheckOilingChina(message) {
 }
 
 function dnsCheckOilingGlobal(message) {
-  let message4 = Object.assign({}, message);
-  let question4 = Object.assign({}, message.questions[0]);
 
-  question4.name = question4.name + ".oil.603030.xyz";
-  question4.type = 'A';
-  message4.questions = [question4];
+  const msg = {
+	type: 'query',
+	id: idgen++,
+	flags: dnspacket.RECURSION_DESIRED,
+	questions: [{
+	  type: 'A',
+	  name: message.questions[0].name + ".oil.603030.xyz"
+	}]
+  };
 
-  const checking = dnsQueryInternal(secondaryCache, message4);
+  const checking = dnsQueryInternal(secondaryCache, msg);
   return checking.then(msg => !msg.answers.some(item => item.type == 'A' && item.data == "127.127.127.127"));
 }
 
 function dnsCheckChinaDomain(message) {
-  let message4 = Object.assign({}, message);
-  let question4 = Object.assign({}, message.questions[0]);
 
-  question4.name = question4.name.split(".").slice(1).join(".");
-  question4.type = 'SOA';
-  message4.questions = [question4];
+  const name = message.questions[0].name;
+  const msg = {
+      type: 'query',
+	  id: idgen++,
+	  flags: dnspacket.RECURSION_DESIRED,
+	  questions: [{
+		type: 'SOA',
+		name: name.split(".").slice(1).join(".")
+	  }]
+  }; 
 
-  const checking = dnsQueryInternal(secondaryCache, message4);
+  const checking = dnsQueryInternal(secondaryCache, msg);
+  const isChinafunc = msg => msg.answers && msg.answers.some(item => item.type == 'A' && china4Lookup(item.data));
 
-  return checking.then(msg => {
-      let item = msg.authorities && msg.authorities[0];
+  const callback = msg => {
+    let mname;
+    let item = msg.authorities && msg.authorities[0];
 
-      if (item && item.type == 'SOA') {
-        let message1 = Object.assign({}, message);
-        let question = Object.assign({}, message.questions[0]);
+    if (item && item.type == 'SOA') {
+      mname = item.data.mname;
+    }
 
-        question.name = item.data.mname;
-        question.type = 'A';
-        message1.questions = [question];
+    item = msg.answers && msg.answers[0];
 
-		LOG_ERROR("domain SOA " + item.data.mname);
-        return dnsQueryInternal(primaryCache, message1).then(
-            msg => (msg.answers && msg.answers.some(item => item.type == 'A' && china4Lookup(item.data)))
-        );
-      }
+    if (item && item.type == 'SOA') {
+      mname = item.data.mname;
+    }
 
-      item = msg.answers && msg.answers[0];
-
-      if (item && item.type == 'SOA') {
-        let message1 = Object.assign({}, message);
-        let question = Object.assign({}, message.questions[0]);
-
-        question.name = item.data.mname;
-        question.type = 'A';
-        message1.questions = [question];
-
-		LOG_ERROR("domain SOA " + item.data.mname);
-        return dnsQueryInternal(primaryCache, message1).then(
-            msg => (msg.answers && msg.answers.some(item => item.type == 'A' && china4Lookup(item.data)))
-        );
-      }
-
-	  LOG_ERROR("domain return false item=" + JSON.stringify(msg));
+    if (!mname) {
       return false;
-  });
+    }
+
+    const msg4 = {
+      type: 'query',
+      id: idgen++,
+      flags: dnspacket.RECURSION_DESIRED,
+      questions: [{
+        type: 'A',
+        name: mname
+      }]
+    };
+
+    LOG_ERROR("domain SOA " + mname + " domain return false item=" + JSON.stringify(msg));
+    return dnsQueryInternal(primaryCache, msg4).then(isChinafunc);
+  };
+
+  return checking.then(callback);
 }
 
 const dnsCheckOiling = Config.oilingMode == "Global"? dnsCheckOilingGlobal: dnsCheckOilingChina;
@@ -596,17 +604,19 @@ function dnsQueryECH(message, facing) {
   return echSecondary.then(formatCb).then(do_ech_delay);
 }
 
-
 function dnsIsReturnCN(message) {
   return dnsCheckOiling(message).then(oil => {
-    if (!oil) {
-      if (!message || message.answers.length == 0)
-        return true;
-      if (message.answers.some(item =>
-        (item.type == 'A' && china4Lookup(item.data)
-          || item.type == 'AAAA' && china6Lookup(item.data))))
-        return true;
-    }
+    if (oil)
+      return false;
+
+    if (!message || message.answers.length == 0)
+      return dnsCheckChinaDomain(message);
+
+    if (message.answers.some(item =>
+      (item.type == 'A' && china4Lookup(item.data)
+        || item.type == 'AAAA' && china6Lookup(item.data))))
+      return true;
+
     return false;
   });
 }
