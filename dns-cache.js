@@ -457,27 +457,21 @@ function dnsQueryImpl(message0, useNat64) {
     });
 
     const zfastPath = fastPath.then(results => {
-      if (results[2]) return slowPath;
-
-      let last = Object.assign({}, results[1]);
-      last.answers = [];
-
-      /*
-      if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
-	return results[1];
-	*/
 
 	// secondary4.catch(e => {});
 	// secondary6.catch(e => {});
 
     // slowPath.catch(e => {});
-      if (results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
-	return last;
 
-      if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
-	return results[1];
+	  if (!results[2]) {
+		if (type == 'A' && results[0].answers.some(item => item.type == 'A' && china4Lookup(item.data)))
+		  return results[0];
 
-      return slowPath;
+		if (type == 'AAAA' && results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
+		  return results[1];
+	  }
+
+	  return slowPath;
     });
 
 	return Promise.any([zfastPath, slowPath]);
