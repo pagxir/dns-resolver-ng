@@ -153,7 +153,7 @@ async function prepareDnsSegment(client) {
 
       const oilMessage = fetchDnsSegment(context);
       const dnsMessage = dnsParse(oilMessage);
-      const dnsResult  = await dnsQuery(dnsMessage);
+      const dnsResult  = await dnsQuery(dnsMessage, {});
 
       sendSegment(client, dnsResult);
     }
@@ -179,7 +179,7 @@ async function onDnsQuery(segment, rinfo) {
 
   try {
     const query = dnsParse(segment);
-    const result = await dnsQuery(query);
+    const result = await dnsQuery(query, config);
     let out_segment = dnsBuild(result);
 
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });
@@ -195,7 +195,7 @@ async function onDnsQueryFallback(segment, rinfo) {
 
   try {
     const query = dnsParse(segment);
-    const result = await dnsQuery(query);
+    const result = await dnsQuery(query, config);
     let out_segment = await dnsIsReturnCN(result)? segment: dnsBuild(result);
 
     this.send(out_segment, rinfo.port, rinfo.address, (err) => { LOG_ERROR("send error " + err); });

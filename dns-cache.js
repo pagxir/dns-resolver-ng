@@ -368,16 +368,19 @@ function china6Lookup(item) {
   return !lookup6(item);
 }
 
-function filterIpv6(results, isNat64, oiling, preferNat64, disableNat64) {
+function filterIpv6(results, isNat64, oiling, ctx, disableNat64) {
   let last = Object.assign({}, results[1]);
   last.answers = [];
 
   // results[1] = makeDns64(results[0], results[1], false);
 
   if (oiling) {
-    results[0] = results[1];
+    results[0] = results[2];
     results[1] = results[3];
   }
+
+  if (ctx.forceDns64)
+    return makeDns64(results[2], results[3], ctx.preferNat64);
 
   if (results[1].answers.some(item => item.type == 'AAAA' && china6Lookup(item.data)))
     return results[1];
@@ -389,7 +392,7 @@ function filterIpv6(results, isNat64, oiling, preferNat64, disableNat64) {
     return results[1];
 
   if (results[2].answers.some(item => item.type == 'A') && !disableNat64)
-    return makeDns64(results[2], results[3], preferNat64);
+    return makeDns64(results[2], results[3], ctx.preferNat64);
 
   if (results[3].answers.some(item => item.type == 'AAAA'))
     return _AsiaWrap(results[3]);
@@ -406,7 +409,7 @@ function filterIpv4(results, useNat64, oiling) {
   return results[2];
 }
 
-function dnsQueryImpl(message0, useNat64) {
+function dnsQueryImpl(message0, ctx) {
   const type = message0.questions[0].type;
   const name = message0.questions[0].name;
 
@@ -453,8 +456,12 @@ function dnsQueryImpl(message0, useNat64) {
       LOG_DEBUG("oiling=" + results[4]);
       LOG_DEBUG("cnDomain=" + results[5]);
 
-      return filter(results, false, results[4], useNat64, results[5]);
+      return filter(results, false, results[4], ctx, results[5]);
     });
+
+    if (ctx.forceDns64) {
+      return slowPath;
+    }
 
     const zfastPath = fastPath.then(results => {
 
@@ -484,7 +491,7 @@ function dnsQueryImpl(message0, useNat64) {
   return Promise.any([secondary, primary]);
 }
 
-function dnsQuery(message) {
+function dnsQuery(message, ctx) {
 
   const normalize = msg => {
     let last = Object.assign({}, msg);
@@ -499,10 +506,10 @@ function dnsQuery(message) {
     return last;
   };
 
-  return dnsQueryImpl(message, Config.preferNat64).then(normalize);
+  return dnsQueryImpl(message, ctx).then(normalize);
 }
 
-function dnsQuerySimple(message, enableDns64) {
+function dnsQuerySimple(message, ctx) {
 
   const normalize = msg => {
     let last = Object.assign({}, msg);
